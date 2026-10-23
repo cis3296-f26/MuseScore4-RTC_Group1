@@ -1,6 +1,6 @@
 import MuseScore 3.0
 import QtQuick 2.0
-import QtWebsockets
+import QtWebsockets 1.0
 import FileIO 3.0
 
 MuseScore {
