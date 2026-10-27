@@ -1,1 +1,11 @@
 node_modules/
+
+# Firebase service-account keys
+*-firebase-adminsdk-*.json
+serviceAccountKey.json
+
+# Environment variables
+.env
+
+# JetBrains project settings
+.idea/
