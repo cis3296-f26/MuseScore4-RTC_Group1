@@ -1,11 +1,30 @@
-import {WebSocketServer} from "ws";
+const { WebSocketServer } = require("ws");
+const { initializeApp, cert} = require("firebase-admin/app");
+const { getFirestore, FieldValue } = require("firebase-admin/firestore");
+const serviceAccount = require("./serviceAccountKey.json");
 
+const app = initializeApp({
+    credential: cert(serviceAccount)
+});
+
+const db = getFirestore(app);
 const wss = new WebSocketServer({ port: 8080 });
 
-wss.on("connection", function connection(ws) {
+
+wss.on("connection", async function connection(ws) {
     ws.on("error", console.error);
 
-    ws.on("message", function message(data) {
+    try{
+        const docRef = await db.collection("server_status").add({
+            event: "New Client Connected",
+            timestamp: FieldValue.serverTimestamp()
+        });
+        console.log("Firestore test successfully written with ID: ", docRef.id);
+    } catch (error) {
+        console.error("Error occurred while writing to Firestore:", error.message);
+    }
+
+    ws.on("message", async function message(data) {
         try {
             const textData = data.toString();
             const parsedData = JSON.parse(textData);
@@ -19,7 +38,7 @@ wss.on("connection", function connection(ws) {
                         }
                     });
                     break;
-                case "Chat Message":
+                case "ChatMessage":
                     console.log("chat message received:", parsedData);
                     wss.clients.forEach(function each(client) {
                         if (client !== ws && client.readyState === 1) {
@@ -31,7 +50,6 @@ wss.on("connection", function connection(ws) {
                     console.log("Unknown message type received:", parsedData.type);
                     ws.send(JSON.stringify({type: "error", error: "Unknown message type"}));
             }
-            console.log("received type:",parsedData.type);
         } catch (error) {
             console.error("Error occurred while parsing JSON:", error.message);
             ws.send(JSON.stringify({type: "error", error: "Invalid JSON format"}));
