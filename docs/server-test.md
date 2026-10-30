@@ -10,11 +10,11 @@ node -e '
 const ws = new WebSocket("ws://localhost:8080");
 
 ws.onopen = () => {
-    console.log("Connected!");
+    console.log("Client connected!");
 };
 
 ws.onmessage = (event) => {
-    console.log("Received:", event.data);
+    console.log("Server response:", event.data);
     ws.close();
 };
 
@@ -24,4 +24,4 @@ ws.onerror = console.error;
 
 ## Example output
 WebSocket server running on port 8080
-Firestore test successfully written with ID: wB1iXsossPfw2nGtw6g
+Firestore test successfully written with ID: UUID
