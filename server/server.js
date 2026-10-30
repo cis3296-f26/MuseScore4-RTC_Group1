@@ -9,7 +9,7 @@ const app = initializeApp({
 
 const db = getFirestore(app);
 const wss = new WebSocketServer({ port: 8080 });
-
+console.log("WebSocket server running on port 8080");
 
 wss.on("connection", async function connection(ws) {
     ws.on("error", console.error);
