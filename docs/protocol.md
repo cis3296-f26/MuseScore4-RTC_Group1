@@ -1,6 +1,6 @@
 # structure messages like this
 
-type:
+type: "ScoreOperation", "ChatMessage"
 version:
 sessionID:
 senderID:
