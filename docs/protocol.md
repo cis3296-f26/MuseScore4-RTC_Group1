@@ -36,8 +36,9 @@ The recommended message structure is:
 }
 ```
 
-The server currently uses only `type`. The other fields are passed through to
-other clients but are not validated or interpreted by the server.
+The server currently uses only `type` to route messages. For recognized
+messages, the server overwrites `timeStamp` with its own current UTC time
+before forwarding the message. Clients must not send a trusted timestamp.
 
 ### Common fields
 
@@ -48,7 +49,7 @@ other clients but are not validated or interpreted by the server.
 | `sessionID` | string | No | Collaboration session identifier |
 | `senderID` | string | No | Identifier of the sending user |
 | `messageID` | string | No | Unique identifier for this message |
-| `timeStamp` | string | No | Recommended ISO 8601 timestamp |
+| `timeStamp` | string | No | Server-generated UTC time in ISO 8601 format |
 | `payload` | object | No | Type-specific data |
 
 ## Server Messages
@@ -60,15 +61,17 @@ The server sends this message immediately after a client connects.
 ```json
 {
 	"type": "Connected",
-	"message": "Successfully connected to MuseScore RTC server"
+	"message": "Successfully connected to MuseScore RTC server",
+	"timeStamp": "2026-11-03T12:00:00.000Z"
 }
 ```
 
 ### Relayed messages
 
-For `ScoreOperation` and `ChatMessage`, the server forwards the original JSON
-message unchanged to every other connected client. The sender does not receive
-its own message back.
+For `ScoreOperation` and `ChatMessage`, the server forwards the message to
+every other connected client. Before forwarding, it replaces `timeStamp` with
+the server's current UTC time. The sender does not receive its own message
+back.
 
 ## Client Messages
 

@@ -16,8 +16,9 @@ wss.on("connection", async function connection(ws) {
 
     ws.on("message", async function message(data) {
         try {
-            const textData = data.toString();
-            const parsedData = JSON.parse(textData);
+            const parsedData = JSON.parse(data.toString());
+            parsedData.timeStamp = new Date().toISOString();
+            const textData = JSON.stringify(parsedData);
 
             switch (parsedData.type) {
                 case "ScoreOperation":
@@ -48,7 +49,8 @@ wss.on("connection", async function connection(ws) {
 
     ws.send(JSON.stringify({
         type: "Connected",
-        message: "Successfully connected to MuseScore RTC server"
+        message: "Successfully connected to MuseScore RTC server",
+        timeStamp: new Date().toISOString()
     }));
 
     try {
