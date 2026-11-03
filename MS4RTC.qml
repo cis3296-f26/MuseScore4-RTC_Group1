@@ -43,9 +43,10 @@ MuseScore {
                 for (var prop in curScore) {
                     props.push(prop + ":" + typeof curScore[prop]);
                 }
+                var scoreTitle = curScore.scoreName ? curScore.scoreName : "Untitled";
                 api.websocket.send(root.nodeSocketID, JSON.stringify({ 
                     type: "ChatMessage", 
-                    message: "Score Loaded: " + curScore.name + " with properties: " + props.length
+                    message: "Score Loaded: " + scoreTitle + " with properties: " + props.length
                 }));
             }
         });
