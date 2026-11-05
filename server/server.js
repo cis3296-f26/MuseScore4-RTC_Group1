@@ -13,6 +13,11 @@ console.log("WebSocket server running on port 8080");
 
 wss.on("connection", async function connection(ws) {
     ws.on("error", console.error);
+    
+    ws.send(JSON.stringify({
+        type: "Connected",
+        message: "Successfully connected to MuseScore RTC server"
+    }));
 
     ws.on("message", async function message(data) {
         try {

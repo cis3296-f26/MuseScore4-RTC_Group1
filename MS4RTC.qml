@@ -12,7 +12,8 @@ MuseScore {
     id: root
 
     function onMessageFromServer(msg) {
-        console.log("Received message from server: " + msg);
+        var parsedMsg = JSON.parse(msg);
+        outfile.write("Server Update: " + parsedMsg.type + " - " + parsedMsg.message + "\n");
     }
 
     FileIO {
