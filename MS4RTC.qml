@@ -22,6 +22,66 @@ MuseScore {
         onError: console.log(msg)
     }  
 
+
+    
+    property int lastNoteCount: -1
+
+    function countNotes() {
+        if (!curScore) return 0;
+
+        var count = 0;
+        var cursor = curScore.newCursor();
+
+        cursor.rewind(0);
+
+        while (cursor.segment) {
+            if (cursor.element && cursor.element.type === Element.CHORD) {
+                count += cursor.element.notes.length;
+            }
+            cursor.next();
+        }
+
+        return count;
+    }
+
+    Timer {
+        id: scoreTimer
+        interval: 1000
+        repeat: true
+        running: false
+
+        onTriggered: {
+            if (!curScore) return;
+
+            var currentCount = root.countNotes();
+
+            if (root.lastNoteCount === -1) {
+                root.lastNoteCount = currentCount;
+                return;
+            }
+
+            if (currentCount !== root.lastNoteCount) {
+                console.log("Score changed!");
+
+                if (root.nodeSocketID !== -1) {
+                    api.websocket.send(
+                        root.nodeSocketID,
+                        JSON.stringify({
+                            type: "ScoreOperation",
+                            operation: "NoteCountChanged",
+                            previousCount: root.lastNoteCount,
+                            currentCount: currentCount
+                        })
+                    );
+                }
+
+                root.lastNoteCount = currentCount;
+            }
+        }
+    }
+
+
+
     onRun: {
         console.log("Run " + root.title);
 
@@ -30,6 +90,9 @@ MuseScore {
             console.log("Connected to Node Backend. Socket ID: " + sid);
             
             root.nodeSocketID = sid;
+
+            root.lastNoteCount = root.countNotes();
+            scoreTimer.start();
 
             api.websocket.onMessage(root.nodeSocketID, root.onMessageFromServer);
 
