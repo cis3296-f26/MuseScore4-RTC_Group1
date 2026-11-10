@@ -7,26 +7,26 @@ const app = initializeApp({
     credential: cert(serviceAccount)
 });
 
-const db = getFirestore(app);
-const wss = new WebSocketServer({ port: 8080 });
+const db = getFirestore(app); // Initialize Firestore database
+const wss = new WebSocketServer({ port: 8080 }); //set port for server to listen on
 console.log("WebSocket server running on port 8080");
 
-wss.on("connection", async function connection(ws) {
+wss.on("connection", async function connection(ws) { // Handle new client connection
     ws.on("error", console.error);
     
-    ws.send(JSON.stringify({
+    ws.send(JSON.stringify({ //send message to client confirming successful connection
         type: "Connected",
         message: "Successfully connected to MuseScore RTC server"
     }));
 
-    ws.on("message", async function message(data) {
+    ws.on("message", async function message(data) { //handle incoming messages from clients
         try {
-            const parsedData = JSON.parse(data.toString());
-            parsedData.timeStamp = new Date().toISOString();
-            const textData = JSON.stringify(parsedData);
+            const parsedData = JSON.parse(data.toString()); //parse incoming data as JSON
+            parsedData.timeStamp = new Date().toISOString(); //add timestamp to parsed data
+            const textData = JSON.stringify(parsedData); //convert parsed data back to string for broadcasting
 
-            switch (parsedData.type) {
-                case "ScoreOperation":
+            switch (parsedData.type) { //handle different message types
+                case "ScoreOperation": // score operation handled
                     console.log("score operation received:", parsedData);
                     wss.clients.forEach(function each(client) {
                         if (client !== ws && client.readyState === 1) {
