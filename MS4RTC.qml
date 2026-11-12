@@ -179,12 +179,6 @@ MuseScore {
 
             api.websocket.onMessage(root.nodeSocketID, root.onMessageFromServer);
 
-            var handshakePayload = JSON.stringify({ 
-                type: "ChatMessage", 
-                message: "Hello from MuseScore 4 Plugin!" 
-            });
-            api.websocket.send(root.nodeSocketID, handshakePayload);
-
             if (curScore) {
                 var props = [];
                 for (var prop in curScore) {
