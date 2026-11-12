@@ -13,11 +13,6 @@ console.log("WebSocket server running on port 8080");
 
 wss.on("connection", async function connection(ws) { // Handle new client connection
     ws.on("error", console.error);
-    
-    ws.send(JSON.stringify({ //send message to client confirming successful connection
-        type: "Connected",
-        message: "Successfully connected to MuseScore RTC server"
-    }));
 
     ws.on("message", async function message(data) { //handle incoming messages from clients
         try {
@@ -33,8 +28,8 @@ wss.on("connection", async function connection(ws) { // Handle new client connec
                             client.send(textData);
                         }
                     });
-                    break;
-                case "ChatMessage":
+                    break; 
+                case "ChatMessage": 
                     console.log("chat message received:", parsedData);
                     wss.clients.forEach(function each(client) {
                         if (client !== ws && client.readyState === 1) {

@@ -9,11 +9,48 @@ MuseScore {
     version: "4.0"
     menuPath: "Plugins.Notes.RTC"
     property int nodeSocketID: -1
+    property int lastNoteCount: -1
+    property int lastTick: -1
+    property int lastPitch: -1
+    property bool isRemoteUpdate: false
     id: root
 
     function onMessageFromServer(msg) {
         var parsedMsg = JSON.parse(msg);
-        outfile.write("Server Update: " + parsedMsg.type + " - " + parsedMsg.message + "\n");
+        if(parsedMsg.type === "ScoreOperation"){
+            if (parsedMsg.operation === "NoteSelectionChanged"){
+                return; // Prevent local cursor from snapping to the note when a remote user selects it
+            }
+
+            if (parsedMsg.operation === "NoteCountChanged" && parsedMsg.note){
+                isRemoteUpdate = true;
+
+                var noteData = parsedMsg.note;
+                var cursor = curScore.newCursor();
+
+                cursor.track = 0;
+
+                curScore.startCmd();
+
+                cursor.rewindToTick(noteData.startTick);
+
+                if (noteData.duration > 0){
+                    cursor.setDuration(noteData.duration, 1920);
+                }else{
+                    cursor.setDuration(1,4);
+                }
+
+                cursor.addNote(noteData.pitch);
+
+                curScore.endCmd();
+
+                root.lastNoteCount = root.countNotes();
+                root.lastPitch = noteData.pitch;
+                root.lastTick = noteData.startTick;
+
+                isRemoteUpdate = false;
+            }
+        }
     }
 
     FileIO {
@@ -21,10 +58,6 @@ MuseScore {
         source: tempPath() + "/MuseScoreScript.log"
         onError: console.log(msg)
     }  
-
-
-    
-    property int lastNoteCount: -1
 
     function countNotes() {
         if (!curScore) return 0;
@@ -44,6 +77,36 @@ MuseScore {
         return count;
     }
 
+    function getSelectedNoteData(){
+        if (!curScore || !curScore.selection || curScore.selection.elements.length === 0) {return null;}
+
+        var el = curScore.selection.elements[0];
+        var realTick = -1;
+
+        if (el.type === Element.NOTE){
+            var chord = el.parent;
+            if (chord && chord.parent){
+                realTick = chord.parent.tick;
+            }
+            return{
+                pitch: el.pitch,
+                startTick: realTick,
+                duration: chord && chord.duration ? chord.duration.ticks : -1
+            };
+        }
+
+        if (el.type === Element.CHORD && el.notes.length > 0){
+            var seg = el.parent;
+            return{
+                pitch: el.notes[0].pitch,
+                startTick: realTick,
+                duration: el.duration ? el.duration.ticks : -1
+            };
+        }
+        
+        return null;
+    }
+
     Timer {
         id: scoreTimer
         interval: 1000
@@ -51,9 +114,10 @@ MuseScore {
         running: false
 
         onTriggered: {
-            if (!curScore) return;
+            if (!curScore || root.isRemoteUpdate) return;
 
             var currentCount = root.countNotes();
+            var noteData = root.getSelectedNoteData();
 
             if (root.lastNoteCount === -1) {
                 root.lastNoteCount = currentCount;
@@ -70,12 +134,31 @@ MuseScore {
                             type: "ScoreOperation",
                             operation: "NoteCountChanged",
                             previousCount: root.lastNoteCount,
-                            currentCount: currentCount
+                            currentCount: currentCount,
+                            note: noteData 
                         })
                     );
                 }
-
                 root.lastNoteCount = currentCount;
+                if (noteData) {
+                    root.lastPitch = noteData.pitch;
+                    root.lastTick = noteData.startTick;
+                }
+            }
+
+            else if (noteData && (noteData.pitch !== root.lastPitch || noteData.startTick !== root.lastTick)){
+                if (root.nodeSocketID !== -1){
+                    api.websocket.send(
+                        root.nodeSocketID,
+                        JSON.stringify({
+                            type: "ScoreOperation",
+                            operation: "NoteSelectionChanged",
+                            note: noteData
+                        })
+                    );
+                }
+                root.lastPitch = noteData.pitch;
+                root.lastTick = noteData.startTick;
             }
         }
     }
