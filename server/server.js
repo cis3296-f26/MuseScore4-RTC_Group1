@@ -23,9 +23,9 @@ wss.on("connection", async function connection(ws) { // Handle new client connec
             switch (parsedData.type) { //handle different message types
                 case "ScoreOperation": // score operation handled
                     console.log("score operation received:", parsedData);
-                    wss.clients.forEach(function each(client) {
-                        if (client !== ws && client.readyState === 1) {
-                            client.send(textData);
+                    wss.clients.forEach(function each(client) { //go through each connected client
+                        if (client !== ws && client.readyState === 1) { //if not this client and client is ready to receive
+                            client.send(textData); //transmit the data
                         }
                     });
                     break; 
