@@ -15,6 +15,7 @@ MuseScore {
     menuPath: "Plugins.Notes.RTC"
     property int nodeSocketID: -1
     property int lastNoteCount: -1
+    property var lastScoreSnapshot: ({})
     property int lastTick: -1
     property int lastPitch: -1
     property bool isRemoteUpdate: false
@@ -108,6 +109,7 @@ MuseScore {
                 curScore.endCmd();
 
                 root.lastNoteCount = root.countNotes();
+                root.lastScoreSnapshot = root.takeScoreSnapshot();
                 root.lastPitch = noteData.pitch;
                 root.lastTick = noteData.startTick;
 
@@ -138,6 +140,77 @@ MuseScore {
         }
 
         return count;
+    }
+
+    // Read notes from all staves and voices. Each track has four voices.
+    // This is a detection only snapshot, it does not modify the score.
+    function takeScoreSnapshot() {
+        var snapshot = {};
+        if (!curScore) return snapshot;
+
+        var totalTracks = curScore.nstaves * 4;
+        for (var track = 0; track < totalTracks; track++) {
+            var cursor = curScore.newCursor();
+            cursor.track = track;
+            cursor.rewind(0);
+
+            while (cursor.segment) {
+                var element = cursor.element;
+                if (element && element.type === Element.CHORD) {
+                    var pitches = [];
+                    for (var i = 0; i < element.notes.length; i++) {
+                        pitches.push(element.notes[i].pitch);
+                    }
+                    pitches.sort(function(a, b) { return a - b; });
+
+                    var duration = element.duration ? element.duration.ticks : -1;
+                    var key = track + ":" + cursor.tick;
+                    snapshot[key] = {
+                        track: track,
+                        tick: cursor.tick,
+                        pitches: pitches,
+                        duration: duration
+                    };
+                }
+                cursor.next();
+            }
+        }
+        return snapshot;
+    }
+
+    function sendDetectedChange(operation, previous, current) {
+        console.log("Detected " + operation + ": " + JSON.stringify({previous: previous, current: current}));
+        if (root.nodeSocketID !== -1) {
+            api.websocket.send(root.nodeSocketID, JSON.stringify({
+                type: "ScoreOperation",
+                operation: operation,
+                previous: previous || null,
+                current: current || null
+            }));
+        }
+    }
+
+    function compareScoreSnapshots(previous, current) {
+        var key;
+        for (key in current) {
+            if (!previous.hasOwnProperty(key)) {
+                root.sendDetectedChange("ChordAdded", null, current[key]);
+            } else {
+                var oldChord = previous[key];
+                var newChord = current[key];
+                if (JSON.stringify(oldChord.pitches) !== JSON.stringify(newChord.pitches)) {
+                    root.sendDetectedChange("PitchChanged", oldChord, newChord);
+                }
+                if (oldChord.duration !== newChord.duration) {
+                    root.sendDetectedChange("DurationChanged", oldChord, newChord);
+                }
+            }
+        }
+        for (key in previous) {
+            if (!current.hasOwnProperty(key)) {
+                root.sendDetectedChange("ChordRemoved", previous[key], null);
+            }
+        }
     }
 
     function getSelectedNoteData(){
@@ -179,46 +252,37 @@ MuseScore {
         onTriggered: {
             if (!curScore || root.isRemoteUpdate) return;
 
+            // Compare real score contents, not just the selected note.
+            var currentSnapshot = root.takeScoreSnapshot();
+            root.compareScoreSnapshots(root.lastScoreSnapshot, currentSnapshot);
+            root.lastScoreSnapshot = currentSnapshot;
+
+            // Retain the original note count change detection.
             var currentCount = root.countNotes();
             var noteData = root.getSelectedNoteData();
-
-            if (root.lastNoteCount === -1) {
-                root.lastNoteCount = currentCount;
-                return;
-            }
-
             if (currentCount !== root.lastNoteCount) {
-                console.log("Score changed!");
-
                 if (root.nodeSocketID !== -1) {
-                    api.websocket.send(
-                        root.nodeSocketID,
-                        JSON.stringify({
-                            type: "ScoreOperation",
-                            operation: "NoteCountChanged",
-                            previousCount: root.lastNoteCount,
-                            currentCount: currentCount,
-                            note: noteData 
-                        })
-                    );
+                    api.websocket.send(root.nodeSocketID, JSON.stringify({
+                        type: "ScoreOperation",
+                        operation: "NoteCountChanged",
+                        previousCount: root.lastNoteCount,
+                        currentCount: currentCount,
+                        note: noteData
+                    }));
                 }
                 root.lastNoteCount = currentCount;
                 if (noteData) {
                     root.lastPitch = noteData.pitch;
                     root.lastTick = noteData.startTick;
                 }
-            }
-
-            else if (noteData && (noteData.pitch !== root.lastPitch || noteData.startTick !== root.lastTick)){
-                if (root.nodeSocketID !== -1){
-                    api.websocket.send(
-                        root.nodeSocketID,
-                        JSON.stringify({
-                            type: "ScoreOperation",
-                            operation: "NoteSelectionChanged",
-                            note: noteData
-                        })
-                    );
+            } else if (noteData &&
+                       (noteData.pitch !== root.lastPitch || noteData.startTick !== root.lastTick)) {
+                if (root.nodeSocketID !== -1) {
+                    api.websocket.send(root.nodeSocketID, JSON.stringify({
+                        type: "ScoreOperation",
+                        operation: "NoteSelectionChanged",
+                        note: noteData
+                    }));
                 }
                 root.lastPitch = noteData.pitch;
                 root.lastTick = noteData.startTick;
@@ -227,17 +291,17 @@ MuseScore {
     }
 
 
-
     onRun: {
         console.log("Run " + root.title);
 
-        // Open the native built-in websocket and capture the dynamic socket ID (sid)
+        // Open the native built in websocket and capture the dynamic socket ID (sid)
         api.websocket.open(8080, function(sid) {
             console.log("Connected to Node Backend. Socket ID: " + sid);
             
             root.nodeSocketID = sid;
 
             root.lastNoteCount = root.countNotes();
+            root.lastScoreSnapshot = root.takeScoreSnapshot();
             scoreTimer.start();
 
             api.websocket.onMessage(root.nodeSocketID, root.onMessageFromServer);
