@@ -1,5 +1,7 @@
 import MuseScore 3.0
-import QtQuick 2.0
+import QtQuick 2.15
+import QtQuick.Controls 2.15
+import QtQuick.Layouts 1.15
 import FileIO 3.0
 
 MuseScore {
@@ -7,6 +9,9 @@ MuseScore {
     description: "This plugin allows for collaboration in MuseScore 4."
     requiresScore: true
     version: "4.0"
+    pluginType: "dialog"
+    width: 400
+    height: 300
     menuPath: "Plugins.Notes.RTC"
     property int nodeSocketID: -1
     property int lastNoteCount: -1
@@ -14,7 +19,65 @@ MuseScore {
     property int lastPitch: -1
     property bool isRemoteUpdate: false
     id: root
+    
 
+
+
+    //GUI for determining hosting/joining score
+    Dialog {
+        id: mainDialog
+        width: 400
+        height: 300
+        visible: true
+        
+        background: Rectangle {
+            color: "#323c4d"
+            radius: 0
+        }
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 10
+            spacing: 10
+
+            Label {
+                text: "Host or Join a Score"
+                font.family: "Corbel"
+                color: "white"
+                font.pixelSize: 32 
+                Layout.alignment: Qt.AlignHCenter
+            }
+
+            Button {
+                text: "Host"
+		Layout.alignment: Qt.AlignHCenter
+                onClicked: {
+                    
+                }
+            }
+            Button {
+                text: "Join"
+		id: joinButton
+		Layout.alignment: Qt.AlignHCenter
+                onClicked: {
+                    
+                }
+            }
+	    TextArea {
+                id: joinCode
+		Layout.fillWidth: true
+                Layout.fillHeight: true
+                wrapMode: Text.Wrap
+                font.pixelSize: 14
+                color: "white"
+                background: Rectangle { color: "black"; radius: 5 }
+                onTextChanged: {
+                    cursorPosition = length
+		    joinButton.text = "Join " + joinCode.text
+                }
+            }
+            
+        }
+    }
     function onMessageFromServer(msg) {
         var parsedMsg = JSON.parse(msg);
         if(parsedMsg.type === "ScoreOperation"){
