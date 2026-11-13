@@ -19,7 +19,6 @@ MuseScore {
     property int lastTick: -1
     property int lastPitch: -1
     property bool isRemoteUpdate: false
-    property var lastSelectedNotes: []
     id: root
     
 
@@ -87,56 +86,33 @@ MuseScore {
                 return; // Prevent local cursor from snapping to the note when a remote user selects it
             }
 
-            if (parsedMsg.operation === "NoteCountChanged" && parsedMsg.notes){
+            if (parsedMsg.operation === "NoteCountChanged" && parsedMsg.note){
                 isRemoteUpdate = true;
-                
+
+                var noteData = parsedMsg.note;
+                var cursor = curScore.newCursor();
+
+                cursor.track = 0;
+
                 curScore.startCmd();
 
-                for (var i = 0; i <parsedMsg.notes.length; i++){
-                    var noteData = parsedMsg.notes[i]
-                    var cursor = curScore.newCursor();
-                    cursor.track = 0
-                    cursor.rewindToTick(noteData.startTick)
+                cursor.rewindToTick(noteData.startTick);
 
-                    if (noteData.duration > 0){
-                        cursor.setDuration(noteData.duration, 1920)
-                    }else{
-                        cursor.setDuration(1,4);
-                    }
-                    cursor.addNote(noteData.pitch);
+                if (noteData.duration > 0){
+                    cursor.setDuration(noteData.duration, 1920);
+                }else{
+                    cursor.setDuration(1,4);
                 }
 
+                cursor.addNote(noteData.pitch);
+
                 curScore.endCmd();
+
                 root.lastNoteCount = root.countNotes();
-<<<<<<< HEAD
                 root.lastScoreSnapshot = root.takeScoreSnapshot();
                 root.lastPitch = noteData.pitch;
                 root.lastTick = noteData.startTick;
-=======
-                isRemoteUpdate = false;
-            }
-            if (parsedMsg.operation === "NotesDeleted" && parsedMsg.notes){
-                isRemoteUpdate = true;
-                curScore.startCmd();
->>>>>>> 2958673b1187ad6c19b2b46fe53057bfc8abd378
 
-                for (var j = 0; j<parsedMsg.notes.length; j++){
-                    var ghostNote = parsedMsg.notes[j];
-                    var delCursor = curScore.newCursor();
-                    delCursor.track = 0;
-                    delCursor.rewindToTick(ghostNote.startTick);
-
-                    if (delCursor.element && delCursor.element.type === Element.CHORD){
-                        for (var k = 0; k < delCursor.element.notes.length; k++){
-                            if (delCursor.element.notes[k].pitch === ghostNote.pitch){
-                                removeElement(delCursor.element.notes[k]);
-                                break;
-                            }
-                        }
-                    }
-                }
-                curScore.endCmd();
-                root.lastNoteCount = root.countNotes();
                 isRemoteUpdate = false;
             }
         }
@@ -283,7 +259,6 @@ MuseScore {
 
             // Retain the original note count change detection.
             var currentCount = root.countNotes();
-<<<<<<< HEAD
             var noteData = root.getSelectedNoteData();
             if (currentCount !== root.lastNoteCount) {
                 if (root.nodeSocketID !== -1) {
@@ -294,38 +269,12 @@ MuseScore {
                         currentCount: currentCount,
                         note: noteData
                     }));
-=======
-            var notesArray = root.getSelectedNoteData();
-
-            if (root.lastNoteCount === -1) {
-                root.lastNoteCount = currentCount;
-                return;
-            }
-
-            if (notesArray && notesArray.length > 0) root.lastSelectedNotes = notesArray;
-
-            if (currentCount > root.lastNoteCount) {
-                console.log("Notes added");
-
-                if (root.nodeSocketID !== -1 && notesArray && notesArray.length > 0) {
-                    api.websocket.send(
-                        root.nodeSocketID,
-                        JSON.stringify({
-                            type: "ScoreOperation",
-                            operation: "NoteCountChanged",
-                            previousCount: root.lastNoteCount,
-                            currentCount: currentCount,
-                            notes: notesArray
-                        })
-                    );
->>>>>>> 2958673b1187ad6c19b2b46fe53057bfc8abd378
                 }
                 root.lastNoteCount = currentCount;
-                if (notesArray && notesArray.length > 0) {
-                    root.lastPitch = notesArray[0].pitch;
-                    root.lastTick = notesArray[0].startTick;
+                if (noteData) {
+                    root.lastPitch = noteData.pitch;
+                    root.lastTick = noteData.startTick;
                 }
-<<<<<<< HEAD
             } else if (noteData &&
                        (noteData.pitch !== root.lastPitch || noteData.startTick !== root.lastTick)) {
                 if (root.nodeSocketID !== -1) {
@@ -334,45 +283,14 @@ MuseScore {
                         operation: "NoteSelectionChanged",
                         note: noteData
                     }));
-=======
-            }
-            else if (currentCount < root.lastNoteCount){
-                console.log("Notes Deleted");
-                if (root.nodeSocketID !== -1 && root.lastSelectedNotes && root.lastSelectedNotes.length > 0){
-                    api.websocket.send(
-                        root.nodeSocketID,
-                        JSON.stringify({
-                            type: "ScoreOperation",
-                            operation: "NotesDeleted",
-                            notes: root.lastSelectedNotes
-                        })
-                    );
                 }
-                root.lastNoteCount = currentCount;
-            }
-            else if (notesArray && notesArray.length > 0 && 
-            (notesArray[0].pitch !== root.lastPitch || notesArray[0].startTick !== root.lastTick)){
-                if (root.nodeSocketID !== -1){
-                    api.websocket.send(
-                        root.nodeSocketID,
-                        JSON.stringify({
-                            type: "ScoreOperation",
-                            operation: "NoteSelectionChanged",
-                            notes: notesArray
-                        })
-                    );
->>>>>>> 2958673b1187ad6c19b2b46fe53057bfc8abd378
-                }
-                root.lastPitch = notesArray[0].pitch;
-                root.lastTick = notesArray[0].startTick;
+                root.lastPitch = noteData.pitch;
+                root.lastTick = noteData.startTick;
             }
         }
     }
 
-<<<<<<< HEAD
 
-=======
->>>>>>> 2958673b1187ad6c19b2b46fe53057bfc8abd378
     onRun: {
         console.log("Run " + root.title);
 
