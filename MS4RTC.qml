@@ -85,36 +85,50 @@ MuseScore {
             if (parsedMsg.operation === "NoteSelectionChanged"){
                 return; // Prevent local cursor from snapping to the note when a remote user selects it
             }
-
-            if (parsedMsg.operation === "NoteCountChanged" && parsedMsg.note){
-                isRemoteUpdate = true;
-
-                var noteData = parsedMsg.note;
-                var cursor = curScore.newCursor();
-
-                cursor.track = 0;
-
-                curScore.startCmd();
-
-                cursor.rewindToTick(noteData.startTick);
-
-                if (noteData.duration > 0){
-                    cursor.setDuration(noteData.duration, 1920);
-                }else{
-                    cursor.setDuration(1,4);
+            
+            isRemoteUpdate = true;
+            curScore.startCmd();
+            
+            var cursor = curScore.newCursor();
+            
+            if (parsedMsg.operation === "ChordAdded" && parsedMsg.current){
+                var chordData = parsedMsg.current;
+                
+                cursor.rewindToTick(chordData.tick);
+                
+                if (chordData.duration > 0){
+                    cursor.setDuration(chordData.duration, 1920);
                 }
-
+                else{
+                    cursor.setDuration(1, 4);
+                }
+                
+                for (var i = 0; i < chordData.pitches.length; i++){
+                    cursor.addNote(chordData.pitches[i]);
+                }
+            }
+            else if(parsedMsg.operation === "NoteCountChanged" && parsedMsg.note){
+                var noteData = parsedMsg.note;
+                
+                cursor.track = (noteData.track !== undefined) ? noteData.track : 0;
+                cursor.rewindToTick(noteData.startTick);
+                if (noteData.duration > 0){
+                    cursor.setDuration(chordData.duration, 1920)
+                }
+                else{
+                    cursor.setDuration(1, 4);
+                }
+                
                 cursor.addNote(noteData.pitch);
-
-                curScore.endCmd();
-
-                root.lastNoteCount = root.countNotes();
-                root.lastScoreSnapshot = root.takeScoreSnapshot();
                 root.lastPitch = noteData.pitch;
                 root.lastTick = noteData.startTick;
-
-                isRemoteUpdate = false;
             }
+            
+            curScore.endCmd();
+            
+            root.lastNoteCount = root.countNotes();
+            root.lastScoreSnapshot = root.takeScoreSnapshot();
+            isRemoteUpdate = false;
         }
     }
 
