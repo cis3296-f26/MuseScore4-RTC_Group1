@@ -21,9 +21,13 @@ MuseScore {
     property bool isRemoteUpdate: false
     id: root
     
-
-
-
+    property var tickSizes: [1920, 960, 480, 240, 120, 60, 30];
+    property var denoms: [1, 2, 4, 8, 16, 32, 64];
+    /*
+    tickSizes and denoms key: 1920/1: Whole Note/Rest. 960/2: Half Note/Rest.
+    480/4: Quarter Note/Rest. 240/8: Eighth Note/Rest. 120/16: 16th Note/Rest.
+    60/32: 32nd Note/Rest. 30/64: 64th Note/Rest
+    */
     //GUI for determining hosting/joining score
     Dialog {
         id: mainDialog
@@ -95,6 +99,21 @@ MuseScore {
                 var chordData = parsedMsg.current;
                 
                 cursor.rewindToTick(chordData.tick);
+                
+                while (cursor.tick < chordData.tick){
+                    var gap = chordData.tick - cursor.tick;
+                    var restAdded = false;
+                    
+                    for (var i = 0; i < root.tickSizes.length; i++){
+                        if (gap >= root.tickSizes[i]){
+                            cursor.setDuration(1, root.denoms[i]);
+                            cursor.addRest();
+                            restAdded = true;
+                            break;
+                        }
+                    }
+                    if (!restAdded) break;
+                }
                 
                 if (chordData.duration > 0){
                     cursor.setDuration(chordData.duration, 1920);
