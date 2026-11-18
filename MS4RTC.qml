@@ -98,11 +98,14 @@ MuseScore {
             if (parsedMsg.operation === "ChordAdded" && parsedMsg.current){
                 var chordData = parsedMsg.current;
                 
+                cursor.track = (chordData.track !== undefined) ? chordData.track: 0;
                 cursor.rewindToTick(chordData.tick);
                 
+                var failSafe = 0;
                 while (cursor.tick < chordData.tick){
                     var gap = chordData.tick - cursor.tick;
                     var restAdded = false;
+                    var prevTick = cursor.tick;
                     
                     for (var i = 0; i < root.tickSizes.length; i++){
                         if (gap >= root.tickSizes[i]){
@@ -112,7 +115,9 @@ MuseScore {
                             break;
                         }
                     }
-                    if (!restAdded) break;
+                    if (!restAdded || cursor.tick <= prevTick) break;
+                    
+                    failSafe++;
                 }
                 
                 if (chordData.duration > 0){
@@ -126,7 +131,7 @@ MuseScore {
                     cursor.addNote(chordData.pitches[i]);
                 }
             }
-            else if (parsedMsg.operation === "ChordRemoved" && parsedMsg.current){
+            else if (parsedMsg.operation === "ChordRemoved" && parsedMsg.previous){
                 var oldChord = parsedMsg.previous;
                 cursor.track = (oldChord.track !== undefined) ? oldChord.track : 0;
                 cursor.rewindToTick(oldChord.tick);
@@ -135,7 +140,7 @@ MuseScore {
                     cursor.setDuration(oldChord.duration, 1920);
                 }
                 else{
-                    cursor.setDuration(1, 4)
+                    cursor.setDuration(1, 4);
                 }
                 cursor.addRest();
             }
