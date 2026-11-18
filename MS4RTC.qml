@@ -126,13 +126,27 @@ MuseScore {
                     cursor.addNote(chordData.pitches[i]);
                 }
             }
+            else if (parsedMsg.operation === "ChordRemoved" && parsedMsg.current){
+                var oldChord = parsedMsg.previous;
+                cursor.track = (oldChord.track !== undefined) ? oldChord.track : 0;
+                cursor.rewindToTick(oldChord.tick);
+                
+                if (oldChord.duration > 0){
+                    cursor.setDuration(oldChord.duration, 1920);
+                }
+                else{
+                    cursor.setDuration(1, 4)
+                }
+                cursor.addRest();
+            }
+            /*
             else if(parsedMsg.operation === "NoteCountChanged" && parsedMsg.note){
                 var noteData = parsedMsg.note;
                 
                 cursor.track = (noteData.track !== undefined) ? noteData.track : 0;
                 cursor.rewindToTick(noteData.startTick);
                 if (noteData.duration > 0){
-                    cursor.setDuration(chordData.duration, 1920)
+                    cursor.setDuration(noteData.duration, 1920)
                 }
                 else{
                     cursor.setDuration(1, 4);
@@ -142,10 +156,11 @@ MuseScore {
                 root.lastPitch = noteData.pitch;
                 root.lastTick = noteData.startTick;
             }
+            */
             
             curScore.endCmd();
             
-            root.lastNoteCount = root.countNotes();
+            //root.lastNoteCount = root.countNotes();
             root.lastScoreSnapshot = root.takeScoreSnapshot();
             isRemoteUpdate = false;
         }
@@ -156,7 +171,7 @@ MuseScore {
         source: tempPath() + "/MuseScoreScript.log"
         onError: console.log(msg)
     }  
-
+    /*
     function countNotes() {
         if (!curScore) return 0;
 
@@ -174,7 +189,7 @@ MuseScore {
 
         return count;
     }
-
+    */
     // Read notes from all staves and voices. Each track has four voices.
     // This is a detection only snapshot, it does not modify the score.
     function takeScoreSnapshot() {
@@ -291,8 +306,11 @@ MuseScore {
             root.lastScoreSnapshot = currentSnapshot;
 
             // Retain the original note count change detection.
-            var currentCount = root.countNotes();
+            
+            
             var noteData = root.getSelectedNoteData();
+            /* Redundant Code. Keeping just in case
+            var currentCount = root.countNotes();
             if (currentCount !== root.lastNoteCount) {
                 if (root.nodeSocketID !== -1) {
                     api.websocket.send(root.nodeSocketID, JSON.stringify({
@@ -308,8 +326,10 @@ MuseScore {
                     root.lastPitch = noteData.pitch;
                     root.lastTick = noteData.startTick;
                 }
-            } else if (noteData &&
-                       (noteData.pitch !== root.lastPitch || noteData.startTick !== root.lastTick)) {
+                
+            } 
+            */
+            if (noteData && (noteData.pitch !== root.lastPitch || noteData.startTick !== root.lastTick)) {
                 if (root.nodeSocketID !== -1) {
                     api.websocket.send(root.nodeSocketID, JSON.stringify({
                         type: "ScoreOperation",
@@ -333,7 +353,7 @@ MuseScore {
             
             root.nodeSocketID = sid;
 
-            root.lastNoteCount = root.countNotes();
+            //root.lastNoteCount = root.countNotes();
             root.lastScoreSnapshot = root.takeScoreSnapshot();
             scoreTimer.start();
 

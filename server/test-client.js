@@ -10,9 +10,9 @@ ws.on("open", function open() {
     previous: null,
     current: {
       track: 0,
-      tick: 0,
+      tick: 1440,
       pitches: [72],
-      duration: 240,
+      duration: 480,
     },
   };
 
