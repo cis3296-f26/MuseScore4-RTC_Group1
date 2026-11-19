@@ -10,15 +10,33 @@ ws.on("open", function open() {
     previous: null,
     current: {
       track: 0,
-      tick: 0,
+      tick: 480,
       pitches: [72],
-      duration: 240,
+      duration: 480,
     },
   };
 
   ws.send(JSON.stringify(test_Payload));
 
   setTimeout(() => {
-    ws.close();
+    console.log("Beginning delete test...");
+
+    const del_Payload = {
+      type: "ScoreOperation",
+      operation: "ChordRemoved",
+      previous: {
+        track: 0,
+        tick: 480,
+        pitches: [72],
+        duration: 480,
+      },
+      current: null,
+    };
+
+    ws.send(JSON.stringify(del_Payload));
+
+    setTimeout(() => {
+      ws.close();
+    }, 3000);
   }, 1000);
 });

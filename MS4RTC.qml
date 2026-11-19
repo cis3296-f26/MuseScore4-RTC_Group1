@@ -174,11 +174,14 @@ if (parsedMsg.type === "PeerLeft") {
             if (parsedMsg.operation === "ChordAdded" && parsedMsg.current){
                 var chordData = parsedMsg.current;
                 
+                cursor.track = (chordData.track !== undefined) ? chordData.track: 0;
                 cursor.rewindToTick(chordData.tick);
                 
+                var failSafe = 0;
                 while (cursor.tick < chordData.tick){
                     var gap = chordData.tick - cursor.tick;
                     var restAdded = false;
+                    var prevTick = cursor.tick;
                     
                     for (var i = 0; i < root.tickSizes.length; i++){
                         if (gap >= root.tickSizes[i]){
@@ -188,7 +191,9 @@ if (parsedMsg.type === "PeerLeft") {
                             break;
                         }
                     }
-                    if (!restAdded) break;
+                    if (!restAdded || cursor.tick <= prevTick) break;
+                    
+                    failSafe++;
                 }
                 
                 if (chordData.duration > 0){
@@ -202,13 +207,27 @@ if (parsedMsg.type === "PeerLeft") {
                     cursor.addNote(chordData.pitches[i]);
                 }
             }
+            else if (parsedMsg.operation === "ChordRemoved" && parsedMsg.previous){
+                var oldChord = parsedMsg.previous;
+                cursor.track = (oldChord.track !== undefined) ? oldChord.track : 0;
+                cursor.rewindToTick(oldChord.tick);
+                
+                if (oldChord.duration > 0){
+                    cursor.setDuration(oldChord.duration, 1920);
+                }
+                else{
+                    cursor.setDuration(1, 4);
+                }
+                cursor.addRest();
+            }
+            /*
             else if(parsedMsg.operation === "NoteCountChanged" && parsedMsg.note){
                 var noteData = parsedMsg.note;
                 
                 cursor.track = (noteData.track !== undefined) ? noteData.track : 0;
                 cursor.rewindToTick(noteData.startTick);
                 if (noteData.duration > 0){
-                    cursor.setDuration(chordData.duration, 1920)
+                    cursor.setDuration(noteData.duration, 1920)
                 }
                 else{
                     cursor.setDuration(1, 4);
@@ -218,10 +237,11 @@ if (parsedMsg.type === "PeerLeft") {
                 root.lastPitch = noteData.pitch;
                 root.lastTick = noteData.startTick;
             }
+            */
             
             curScore.endCmd();
             
-            root.lastNoteCount = root.countNotes();
+            //root.lastNoteCount = root.countNotes();
             root.lastScoreSnapshot = root.takeScoreSnapshot();
             isRemoteUpdate = false;
         }
@@ -232,7 +252,7 @@ if (parsedMsg.type === "PeerLeft") {
         source: tempPath() + "/MuseScoreScript.log"
         onError: console.log(msg)
     }  
-
+    /*
     function countNotes() {
         if (!curScore) return 0;
 
@@ -250,7 +270,7 @@ if (parsedMsg.type === "PeerLeft") {
 
         return count;
     }
-
+    */
     // Read notes from all staves and voices. Each track has four voices.
     // This is a detection only snapshot, it does not modify the score.
     function takeScoreSnapshot() {
@@ -367,8 +387,11 @@ if (parsedMsg.type === "PeerLeft") {
             root.lastScoreSnapshot = currentSnapshot;
 
             // Retain the original note count change detection.
-            var currentCount = root.countNotes();
+            
+            
             var noteData = root.getSelectedNoteData();
+            /* Redundant Code. Keeping just in case
+            var currentCount = root.countNotes();
             if (currentCount !== root.lastNoteCount) {
                 if (root.nodeSocketID !== -1) {
                     api.websocket.send(root.nodeSocketID, JSON.stringify({
@@ -384,8 +407,10 @@ if (parsedMsg.type === "PeerLeft") {
                     root.lastPitch = noteData.pitch;
                     root.lastTick = noteData.startTick;
                 }
-            } else if (noteData &&
-                       (noteData.pitch !== root.lastPitch || noteData.startTick !== root.lastTick)) {
+                
+            } 
+            */
+            if (noteData && (noteData.pitch !== root.lastPitch || noteData.startTick !== root.lastTick)) {
                 if (root.nodeSocketID !== -1) {
                     api.websocket.send(root.nodeSocketID, JSON.stringify({
                         type: "ScoreOperation",
@@ -409,7 +434,7 @@ if (parsedMsg.type === "PeerLeft") {
             
             root.nodeSocketID = sid;
 
-            root.lastNoteCount = root.countNotes();
+            //root.lastNoteCount = root.countNotes();
             root.lastScoreSnapshot = root.takeScoreSnapshot();
             
 
