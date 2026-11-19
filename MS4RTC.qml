@@ -14,6 +14,7 @@ MuseScore {
     height: 300
     menuPath: "Plugins.Notes.RTC"
     property int nodeSocketID: -1
+    property string activeSessionCode: ""
     property int lastNoteCount: -1
     property var lastScoreSnapshot: ({})
     property int lastTick: -1
@@ -56,14 +57,36 @@ MuseScore {
                 text: "Host"
 		Layout.alignment: Qt.AlignHCenter
                 onClicked: {
-                    
-                }
+                    if (root.nodeSocketID === -1) {
+                        sessionStatus.text = "Not connected to server.";
+                        return;
+    }
+
+                    api.websocket.send(root.nodeSocketID, JSON.stringify({
+                    type: "HostSession"
+    }));
+}
             }
             Button {
                 text: "Join"
 		id: joinButton
 		Layout.alignment: Qt.AlignHCenter
-                onClicked: {
+                onClicked: {  if (root.nodeSocketID === -1) {
+        sessionStatus.text = "Not connected to server.";
+        return;
+    }
+
+    var code = joinCode.text.trim().toUpperCase();
+
+    if (!/^[A-Z0-9]{4}$/.test(code)) {
+        sessionStatus.text = "Enter a valid 4-character code.";
+        return;
+    }
+
+    api.websocket.send(root.nodeSocketID, JSON.stringify({
+        type: "JoinSession",
+        sessionCode: code
+    }));
                     
                 }
             }
@@ -78,13 +101,66 @@ MuseScore {
                 onTextChanged: {
                     cursorPosition = length
 		    joinButton.text = "Join " + joinCode.text
-                }
+                }}
+                Label {
+                    id: sessionStatus
+                    text: "Connecting to server..."
+                    color: "white"
+                    wrapMode: Text.Wrap
+                    Layout.fillWidth: true
+
             }
             
         }
     }
     function onMessageFromServer(msg) {
         var parsedMsg = JSON.parse(msg);
+        if (parsedMsg.type === "Connected") {
+    sessionStatus.text = "Connected to server.";
+    return;
+}
+
+if (parsedMsg.type === "SessionCreated" ||
+    parsedMsg.type === "SessionJoined") {
+
+    root.activeSessionCode = parsedMsg.sessionCode;
+
+    if (parsedMsg.type === "SessionCreated") {
+        sessionStatus.text = "Hosting: " + parsedMsg.sessionCode;
+    } else {
+        sessionStatus.text = "Joined: " + parsedMsg.sessionCode;
+    }
+
+    root.lastNoteCount = root.countNotes();
+    root.lastScoreSnapshot = root.takeScoreSnapshot();
+    scoreTimer.start();
+    return;
+}
+
+if (parsedMsg.type === "Error" ||
+    parsedMsg.type === "error") {
+    sessionStatus.text = parsedMsg.message ||
+                         parsedMsg.error ||
+                         "An error occurred.";
+    return;
+}
+
+if (parsedMsg.type === "SessionClosed") {
+    root.activeSessionCode = "";
+    scoreTimer.stop();
+    sessionStatus.text = "Session closed.";
+    return;
+}
+
+if (parsedMsg.type === "PeerJoined") {
+    sessionStatus.text = "Another user joined.";
+    return;
+}
+
+if (parsedMsg.type === "PeerLeft") {
+    sessionStatus.text = "Another user left.";
+    return;
+}
         if(parsedMsg.type === "ScoreOperation"){
             if (parsedMsg.operation === "NoteSelectionChanged"){
                 return; // Prevent local cursor from snapping to the note when a remote user selects it
@@ -335,7 +411,7 @@ MuseScore {
 
             root.lastNoteCount = root.countNotes();
             root.lastScoreSnapshot = root.takeScoreSnapshot();
-            scoreTimer.start();
+            
 
             api.websocket.onMessage(root.nodeSocketID, root.onMessageFromServer);
 
