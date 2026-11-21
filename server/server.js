@@ -205,7 +205,8 @@ wss.on("connection", async function connection(ws) { // Handle new client connec
             parsedData.timeStamp = new Date().toISOString(); //add timestamp to parsed data
             const textData = JSON.stringify(parsedData); //convert parsed data back to string for broadcasting
             if ((parsedData.type === "ScoreOperation" ||
-            parsedData.type === "ChatMessage") &&
+            parsedData.type === "ChatMessage" ||
+            parsedData.type === "CursorPosition") &&
             !ws.sessionCode) {
 
              sendJSON(ws, {
@@ -248,6 +249,26 @@ wss.on("connection", async function connection(ws) { // Handle new client connec
                         }
                     });
                     break; //stop loop when done with score op
+                case "CursorPosition":
+                    console.log("Cursor position received:", parsedData);
+                    if (parsedData.position !== null &&
+                        (typeof parsedData.position !== "object" ||
+                        !Number.isInteger(parsedData.position.tick) ||
+                        !Number.isInteger(parsedData.position.staff) ||
+                        parsedData.position.tick < 0 ||
+                        parsedData.position.staff < 0)) {
+                        sendJSON(ws, { type: "Error", message: "Invalid cursor position." });
+                        break;
+                    }
+                    parsedData.clientId = ws.clientId;
+                    parsedData.sessionCode = ws.sessionCode;
+                    wss.clients.forEach(function each(client) {
+                        if (client !== ws && client.readyState === 1 &&
+                            client.sessionCode === ws.sessionCode) {
+                            sendJSON(client, parsedData);
+                        }
+                    });
+                    break;
                 case "ChatMessage": //chat message handler
                     console.log("chat message received:", parsedData);
                     wss.clients.forEach(function each(client) {//go through each connected client
@@ -271,6 +292,7 @@ wss.on("connection", async function connection(ws) { // Handle new client connec
         message: error.message || "Request failed."
     });
 }
+    });
     ws.send(JSON.stringify({
         type: "Connected",
         message: "Successfully connected to MuseScore RTC server",
