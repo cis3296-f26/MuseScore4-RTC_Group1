@@ -20,6 +20,7 @@ MuseScore {
     property int lastTick: -1
     property int lastPitch: -1
     property bool isRemoteUpdate: false
+    property string lastCursorPositionKey: ""
     id: root
     
     property var tickSizes: [1920, 960, 480, 240, 120, 60, 30];
@@ -103,6 +104,13 @@ MuseScore {
 		    joinButton.text = "Join " + joinCode.text
                 }}
                 Label {
+                    id: remoteCursorStatus
+                    text: "Other collaborator: no selection reported"
+                    color: "#a9d8ff"
+                    wrapMode: Text.Wrap
+                    Layout.fillWidth: true
+                }
+                Label {
                     id: sessionStatus
                     text: "Connecting to server..."
                     color: "white"
@@ -131,8 +139,9 @@ if (parsedMsg.type === "SessionCreated" ||
         sessionStatus.text = "Joined: " + parsedMsg.sessionCode;
     }
 
-    root.lastNoteCount = root.countNotes();
     root.lastScoreSnapshot = root.takeScoreSnapshot();
+    root.lastCursorPositionKey = "";
+    root.pollCursorPosition();
     scoreTimer.start();
     return;
 }
@@ -148,6 +157,8 @@ if (parsedMsg.type === "Error" ||
 if (parsedMsg.type === "SessionClosed") {
     root.activeSessionCode = "";
     scoreTimer.stop();
+    remoteCursorStatus.text = "Other collaborator: no selection reported";
+    root.lastCursorPositionKey = "";
     sessionStatus.text = "Session closed.";
     return;
 }
@@ -159,8 +170,20 @@ if (parsedMsg.type === "PeerJoined") {
 
 if (parsedMsg.type === "PeerLeft") {
     sessionStatus.text = "Another user left.";
+    remoteCursorStatus.text = "Other collaborator: no selection reported";
     return;
 }
+        if (parsedMsg.type === "CursorPosition") {
+            var pos = parsedMsg.position;
+            if (!pos) {
+                remoteCursorStatus.text = "Other collaborator: selection cleared";
+            } else {
+                remoteCursorStatus.text = "Other collaborator: staff " +
+                    (pos.staff + 1) + ", tick " + pos.tick +
+                    (pos.pitch !== undefined ? ", MIDI pitch " + pos.pitch : "");
+            }
+            return;
+        }
         if(parsedMsg.type === "ScoreOperation"){
             if (parsedMsg.operation === "NoteSelectionChanged"){
                 return; // Prevent local cursor from snapping to the note when a remote user selects it
@@ -372,6 +395,52 @@ if (parsedMsg.type === "PeerLeft") {
         return null;
     }
 
+    // Read the visible GUI selection, not a separate traversal cursor.
+    function getCursorPosition() {
+        if (!curScore || !curScore.selection) return null;
+        var selection = curScore.selection;
+        if (selection.isRange && selection.startSegment) {
+            return {
+                kind: "range",
+                tick: selection.startSegment.tick,
+                staff: selection.startStaff
+            };
+        }
+        if (!selection.elements || selection.elements.length === 0) return null;
+        var el = selection.elements[0];
+        if (!el) return null;
+        var position = {
+            kind: "element",
+            tick: -1,
+            staff: (el.track !== undefined && el.track >= 0)
+                ? Math.floor(el.track / 4) : -1
+        };
+        var parent = el;
+        for (var depth = 0; depth < 5 && parent; depth++) {
+            if (parent.type === Element.SEGMENT && parent.tick !== undefined) {
+                position.tick = parent.tick;
+                break;
+            }
+            parent = parent.parent;
+        }
+        if (position.tick < 0 || position.staff < 0) return null;
+        if (el.type === Element.NOTE) position.pitch = el.pitch;
+        return position;
+    }
+
+    function pollCursorPosition() {
+        if (!root.activeSessionCode || root.nodeSocketID === -1) return;
+        var position = root.getCursorPosition();
+        var signature = JSON.stringify(position);
+        if (signature === root.lastCursorPositionKey) return;
+        root.lastCursorPositionKey = signature;
+        console.log("Cursor position: " + signature);
+        api.websocket.send(root.nodeSocketID, JSON.stringify({
+            type: "CursorPosition",
+            position: position
+        }));
+    }
+
     Timer {
         id: scoreTimer
         interval: 1000
@@ -380,6 +449,8 @@ if (parsedMsg.type === "PeerLeft") {
 
         onTriggered: {
             if (!curScore || root.isRemoteUpdate) return;
+
+            root.pollCursorPosition();
 
             // Compare real score contents, not just the selected note.
             var currentSnapshot = root.takeScoreSnapshot();
