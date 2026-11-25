@@ -1,5 +1,7 @@
 node_modules/
 
+.vscode/
+
 # Firebase service-account keys
 *-firebase-adminsdk-*.json
 serviceAccountKey.json
