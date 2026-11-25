@@ -146,7 +146,7 @@ MuseScore {
             return;
         }
 
-        if (parsedMsg.type === "Error" || parsedMsg.type === "error") {
+        if (parsedMsg.type === "Error") {
             sessionStatus.text = parsedMsg.message || parsedMsg.error || "An error occurred.";
             return;
         }
@@ -224,6 +224,22 @@ MuseScore {
                 for (var i = 0; i < chordData.pitches.length; i++) {
                     cursor.addNote(chordData.pitches[i]);
                 }
+                
+            } else if ((parsedMsg.operation === "PitchChanged" || parsedMsg.operation === "DurationChanged") && parsedMsg.current){
+                var newChord = parsedMsg.current;
+                cursor.track = (newChord.track !== undefined) ? newChord.track : 0;
+                cursor.rewindToTick(newChord.tick);
+                
+                if (newChord.duration > 0){
+                    cursor.setDuration(newChord.duration, 1920);
+                } else{
+                    cursor.setDuration(1, 4);
+                }
+                
+                for (var i = 0; i < newChord.pitches.length; i++){
+                    cursor.addNote(newChord.pitches[i], i > 0);
+                }
+                
             } else if (parsedMsg.operation === "ChordRemoved" && parsedMsg.previous) {
                 var oldChord = parsedMsg.previous;
                 cursor.track = (oldChord.track !== undefined) ? oldChord.track : 0;
