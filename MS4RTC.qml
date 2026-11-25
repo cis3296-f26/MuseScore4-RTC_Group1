@@ -147,7 +147,7 @@ MuseScore {
         }
 
         if (parsedMsg.type === "Error") {
-            sessionStatus.text = parsedMsg.message || parsedMsg.error || "An error occurred.";
+            sessionStatus.text = parsedMsg.message ||"An error occurred.";
             return;
         }
 
