@@ -289,7 +289,7 @@ wss.on("connection", async function connection(ws) {
           break; //stop loop when done
         default:
           console.log("Unknown message type received:", parsedData.type);
-          ws.send(JSON.stringify({ type: "Error", error: "Unknown message type" })); //if wrong data received
+          ws.send(JSON.stringify({ type: "Error", message: "Unknown message type" })); //if wrong data received
       }
     } catch (error) {
       console.error("Message processing error:", error);
