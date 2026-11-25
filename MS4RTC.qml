@@ -147,7 +147,7 @@ MuseScore {
         }
 
         if (parsedMsg.type === "Error") {
-            sessionStatus.text = parsedMsg.message ||"An error occurred.";
+            sessionStatus.text = parsedMsg.message || "An error occurred.";
             return;
         }
 
@@ -531,18 +531,6 @@ MuseScore {
             root.lastScoreSnapshot = root.takeScoreSnapshot();
 
             api.websocket.onMessage(root.nodeSocketID, root.onMessageFromServer);
-
-            if (curScore) {
-                var props = [];
-                for (var prop in curScore) {
-                    props.push(prop + ":" + typeof curScore[prop]);
-                }
-                var scoreTitle = curScore.scoreName ? curScore.scoreName : "Untitled";
-                api.websocket.send(root.nodeSocketID, JSON.stringify({
-                    type: "ChatMessage",
-                    message: "Score Loaded: " + scoreTitle + " with properties: " + props.length
-                }));
-            }
         });
     }
 }

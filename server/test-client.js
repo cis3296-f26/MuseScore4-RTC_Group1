@@ -12,13 +12,97 @@ ws.on("open", () => {
   ws.send(JSON.stringify({ type: "JoinSession", sessionCode: sessionCode.toUpperCase() }));
 });
 
-ws.on("message,", (data) => {
+ws.on("message", (data) => {
   const msg = JSON.parse(data.toString());
 
   if (msg.type === "Error") {
+    console.error("Server error: ", msg.message);
+    ws.close();
+    return;
+  }
+
+  if (msg.type === "SessionJoined") {
+    console.log(`Joined ${msg.sessionCode}. Starting tests...`);
+    runScoreTests();
   }
 });
 
+function runScoreTests() {
+  console.log("1. Addition Test...");
+
+  ws.send(
+    JSON.stringify({
+      type: "ScoreOperation",
+      operation: "ChordAdded",
+      previous: null,
+      current: { track: 0, tick: 480, pitches: [72], duration: 480 },
+    }),
+  );
+
+  setTimeout(() => {
+    console.log("2. Pitch Change Test...");
+    ws.send(
+      JSON.stringify({
+        type: "ScoreOperation",
+        operation: "PitchChanged",
+        previous: {
+          track: 0,
+          tick: 480,
+          pitches: [72],
+          duration: 480,
+        },
+        current: {
+          track: 0,
+          tick: 480,
+          pitches: [74],
+          duration: 480,
+        },
+      }),
+    );
+
+    setTimeout(() => {
+      console.log("3. Duration Test...");
+      ws.send(
+        JSON.stringify({
+          type: "ScoreOperation",
+          operation: "DurationChanged",
+          previous: {
+            track: 0,
+            tick: 480,
+            pitches: [74],
+            duration: 480,
+          },
+          current: {
+            track: 0,
+            tick: 480,
+            pitches: [74],
+            duration: 960,
+          },
+        }),
+      );
+
+      setTimeout(() => {
+        console.log("4. Deletion Test...");
+        ws.send(
+          JSON.stringify({
+            type: "ScoreOperation",
+            operation: "ChordRemoved",
+            previous: {
+              track: 0,
+              tick: 480,
+              pitches: [74],
+              duration: 960,
+            },
+            current: null,
+          }),
+        );
+        setTimeout(() => {
+          ws.close();
+        }, 1000);
+      }, 1000);
+    }, 1000);
+  }, 1000);
+}
 /*
 ws.on("open", function open() {
   console.log("Connected to server. \nBegining Addition Test...");
