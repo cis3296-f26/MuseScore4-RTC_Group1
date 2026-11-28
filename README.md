@@ -4,8 +4,8 @@
 
 ## Prerequisites
 
-* **Node.js** installed on your machine.
-* A valid `serviceAccountKey.json` file (Firebase credentials).
+- **Node.js** installed on your machine.
+- A valid `serviceAccountKey.json` file (Firebase credentials).
 
 ## Server Setup
 
@@ -28,29 +28,27 @@
    node server.js
    ```
 
-   *You should see the message: `WebSocket server running on port 8080`*
+   _You should see the message: `WebSocket server running on port 8080`_
 
-## Testing the Server (Command Line)
+## Installing Plugin
 
-To verify the server works without MuseScore, open a **second** terminal window and run:
+1. Take the file labled `MS4RTC.qml` and place it in the MuseScore plugins folder
 
-```bash
-npx wscat -c ws://localhost:8080
-```
+   _To find it, open MuseScore, click **Edit → Preferences → Folders**, and check or change the **Plugins** path._
 
-*(If it asks you to install wscat, type `y` for yes).*
+2. Open MuseScore,**Plugins → Plugin Manager**, and enable **MuseScore 4 Real-Time Collab**.
+3. Open a score, and click the plugin from the **Plugins** dropdown in the top left
+4. A new window will open, Click **Host** to host a session or enter a room code and click **Join** to join a session
 
-Once connected, paste the following JSON string and press Enter to send a test message:
+   _If hosting, the room code will appear in the bottom left_
 
-```json
-{"type":"ChatMessage","message":"hi"}
-```
+## Running the Plugin Test (Command Line)
 
-## Testing with MuseScore 4
+1. Before testing, make sure the server is running and a room is actively being hosted
+2. Open a **second** terminal, navigate to the `server` folder, and run:
 
-1. Copy the plugin's `.qml` file into your local MuseScore plugins directory:
-   * **Windows:** `C:\Users\<YourUsername>\Documents\MuseScore4\Plugins`
-   * **Mac:** `~/Documents/MuseScore4/Plugins`
-2. With the Node server still running, open a score in MuseScore 4.
-3. Click the plugin from the **Plugins** dropdown menu in the top left.
-4. Check your Node server terminal. If the test was successful, you should instantly see: `message: 'Hello from MuseScore 4 Plugin!'` along with the score properties.
+   ```bash
+   node test-client.js <ROOM-CODE>
+   ```
+
+_You should see messages in the terminal confirming connection and then running tests_
