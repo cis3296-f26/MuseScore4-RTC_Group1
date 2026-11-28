@@ -138,7 +138,7 @@ async function joinSession(ws, rawCode) {
         }
     }
 
-    // Ask only the host for an initial snapshot, addressed to this joiner.
+    // Request host score for new client
     const host = [...wss.clients].find(client =>
         client.isHost && client.sessionCode === code && client.readyState === 1
     );
@@ -248,7 +248,7 @@ wss.on("connection", async function connection(ws) {
                     }
                     break;
                 case "ScoreSnapshot": {
-                    // Only the active session host can supply the initial score.
+                    // Verify sender is host
                     if (!ws.isHost || !ws.sessionCode) {
                         sendJSON(ws, { type: "Error", message: "Only the session host can send score snapshots." });
                         break;

@@ -34,7 +34,7 @@ MuseScore {
     480/4: Quarter Note/Rest. 240/8: Eighth Note/Rest. 120/16: 16th Note/Rest.
     60/32: 32nd Note/Rest. 30/64: 64th Note/Rest
     */
-    //GUI for determining hosting/joining score
+    // Host and join window
     Dialog {
         id: mainDialog
         width: 400
@@ -220,7 +220,7 @@ MuseScore {
                 scoreTimer.start();
             } else {
                 root.isHostSession = false;
-                // Don't broadcast the joiner's existing score before initial sync.
+                // Wait for the host score
                 root.waitingForHostSnapshot = true;
                 scoreTimer.stop();
                 sessionStatus.text = "Joined: " + parsedMsg.sessionCode + " (waiting for host score)";
@@ -404,28 +404,8 @@ MuseScore {
                 }
                 cursor.addRest();
             }
-            /*
-            else if(parsedMsg.operation === "NoteCountChanged" && parsedMsg.note){
-                var noteData = parsedMsg.note;
-
-                cursor.track = (noteData.track !== undefined) ? noteData.track : 0;
-                cursor.rewindToTick(noteData.startTick);
-                if (noteData.duration > 0){
-                    cursor.setDuration(noteData.duration, 1920)
-                }
-                else{
-                    cursor.setDuration(1, 4);
-                }
-
-                cursor.addNote(noteData.pitch);
-                root.lastPitch = noteData.pitch;
-                root.lastTick = noteData.startTick;
-            }
-            */
 
             curScore.endCmd();
-
-            //root.lastNoteCount = root.countNotes();
             root.lastScoreSnapshot = root.takeScoreSnapshot();
             isRemoteUpdate = false;
         }
@@ -436,27 +416,7 @@ MuseScore {
         source: tempPath() + "/MuseScoreScript.log"
         onError: console.log(msg)
     }
-    /*
-    function countNotes() {
-        if (!curScore) return 0;
-
-        var count = 0;
-        var cursor = curScore.newCursor();
-
-        cursor.rewind(0);
-
-        while (cursor.segment) {
-            if (cursor.element && cursor.element.type === Element.CHORD) {
-                count += cursor.element.notes.length;
-            }
-            cursor.next();
-        }
-
-        return count;
-    }
-    */
-    // Read notes from all staves and voices. Each track has four voices.
-    // This is a detection only snapshot, it does not modify the score.
+    // Get notes from all tracks
     function takeScoreSnapshot() {
         var snapshot = {};
         if (!curScore)
@@ -539,7 +499,7 @@ MuseScore {
 
         for (var trackKey in tracks) {
             var chords = tracks[trackKey];
-            chords.sort(function(a, b) {
+            chords.sort(function (a, b) {
                 return a.tick - b.tick;
             });
 
@@ -568,7 +528,7 @@ MuseScore {
 
             var existing = root.takeScoreSnapshot();
             var oldKeys = Object.keys(existing);
-            oldKeys.sort(function(a, b) {
+            oldKeys.sort(function (a, b) {
                 return existing[b].track - existing[a].track ||
                     existing[b].tick - existing[a].tick;
             });
@@ -589,7 +549,7 @@ MuseScore {
                 clearCursor.addRest();
             }
 
-            var trackNames = Object.keys(tracks).sort(function(a, b) {
+            var trackNames = Object.keys(tracks).sort(function (a, b) {
                 return Number(a) - Number(b);
             });
 
@@ -637,7 +597,7 @@ MuseScore {
                 }
             }
 
-            // Add other pitches after the rhythm is in place.
+            // Add remaining chord notes
             for (var v = 0; v < keys.length; v++) {
                 var hostChord = snapshot[keys[v]];
                 if (hostChord.pitches.length < 2)
@@ -677,7 +637,7 @@ MuseScore {
 
                 if (!actual || actual.duration !== expected.duration ||
                     JSON.stringify(actual.pitches) !==
-                    JSON.stringify(expected.pitches.slice().sort(function(a, b) {
+                    JSON.stringify(expected.pitches.slice().sort(function (a, b) {
                         return a - b;
                     }))) {
                     throw new Error("Notes differ at " + keys[x]);
@@ -702,7 +662,6 @@ MuseScore {
             root.isRemoteUpdate = false;
         }
     }
-
 
     function sendDetectedChange(operation, previous, current) {
         console.log("Detected " + operation + ": " + JSON.stringify({
@@ -774,7 +733,7 @@ MuseScore {
         return null;
     }
 
-    // Read the visible GUI selection, not a separate traversal cursor.
+    // Get selected position
     function getCursorPosition() {
         if (!curScore || !curScore.selection)
             return null;
@@ -838,34 +797,12 @@ MuseScore {
 
             root.pollCursorPosition();
 
-            // Compare real score contents, not just the selected note.
+            // Check for score changes
             var currentSnapshot = root.takeScoreSnapshot();
             root.compareScoreSnapshots(root.lastScoreSnapshot, currentSnapshot);
             root.lastScoreSnapshot = currentSnapshot;
 
-            // Retain the original note count change detection.
-
             var noteData = root.getSelectedNoteData();
-            /* Redundant Code. Keeping just in case
-            var currentCount = root.countNotes();
-            if (currentCount !== root.lastNoteCount) {
-                if (root.nodeSocketID !== -1) {
-                    api.websocket.send(root.nodeSocketID, JSON.stringify({
-                        type: "ScoreOperation",
-                        operation: "NoteCountChanged",
-                        previousCount: root.lastNoteCount,
-                        currentCount: currentCount,
-                        note: noteData
-                    }));
-                }
-                root.lastNoteCount = currentCount;
-                if (noteData) {
-                    root.lastPitch = noteData.pitch;
-                    root.lastTick = noteData.startTick;
-                }
-
-            }
-            */
             if (noteData && (noteData.pitch !== root.lastPitch || noteData.startTick !== root.lastTick)) {
                 if (root.nodeSocketID !== -1) {
                     api.websocket.send(root.nodeSocketID, JSON.stringify({
@@ -883,13 +820,11 @@ MuseScore {
     onRun: {
         console.log("Run " + root.title);
 
-        // Open the native built in websocket and capture the dynamic socket ID (sid)
+        // Connect to the WebSocket server
         api.websocket.open(8080, function (sid) {
             console.log("Connected to Node Backend. Socket ID: " + sid);
 
             root.nodeSocketID = sid;
-
-            //root.lastNoteCount = root.countNotes();
             root.lastScoreSnapshot = root.takeScoreSnapshot();
 
             api.websocket.onMessage(root.nodeSocketID, root.onMessageFromServer);
