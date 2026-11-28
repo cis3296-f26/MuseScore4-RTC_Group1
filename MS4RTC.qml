@@ -422,180 +422,209 @@ MuseScore {
         return snapshot;
     }
 
-    // Initial synchronization: replace chord content in a compatible score template.
-    // This is NOT a complete .mscz import. Work on disposable copies of a score.
-
     function applyHostSnapshot(snapshot) {
+        root.lastSyncError = "Unknown error";
+
         if (!curScore || !snapshot || Array.isArray(snapshot)) {
-            console.log("Sync failed: missing score or invalid snapshot.");
+            root.lastSyncError = "Missing score or invalid snapshot.";
             return false;
         }
 
         var keys = Object.keys(snapshot);
-        var totalTracks = curScore.nstaves * 4;
+        var trackCount = curScore.nstaves * 4;
+        var tracks = {};
+        var restSizes = [1920, 960, 480, 240, 120, 60, 30];
+        var commandStarted = false;
 
-        console.log("Starting host score synchronization.");
-        console.log("Incoming chord positions: " + keys.length);
-        console.log("Available tracks: " + totalTracks);
-
-
-        // Validate incoming chord data.
         for (var i = 0; i < keys.length; i++) {
-            var chord = snapshot[keys[i]];
+            var key = keys[i];
+            var chord = snapshot[key];
 
-            if (!chord) {
-                root.lastSyncError = "Missing chord at " + keys[i];
-                return false;
-            }
-
-            if (!Number.isInteger(chord.track) ||
-                chord.track < 0 ||
-                chord.track >= totalTracks) {
-                root.lastSyncError = "Invalid track at " + keys[i];
-                return false;
-            }
-
-            if (!Number.isInteger(chord.tick) || chord.tick < 0) {
-                root.lastSyncError = "Invalid tick at " + keys[i];
-                return false;
-            }
-
-            if (!Number.isInteger(chord.duration) ||
-                chord.duration <= 0) {
-                root.lastSyncError = "Invalid duration at " + keys[i] +
-                    ": " + chord.duration;
-                return false;
-            }
-
-            if (!Array.isArray(chord.pitches) ||
-                chord.pitches.length === 0) {
-                root.lastSyncError = "Invalid pitches at " + keys[i];
-                return false;
-            }
-
-            if (keys[i] !== chord.track + ":" + chord.tick) {
-                root.lastSyncError = "Chord position mismatch at " + keys[i];
+            if (!chord ||
+                !Number.isInteger(chord.track) ||
+                chord.track < 0 || chord.track >= trackCount ||
+                !Number.isInteger(chord.tick) || chord.tick < 0 ||
+                !Number.isInteger(chord.duration) || chord.duration <= 0 ||
+                !Array.isArray(chord.pitches) || chord.pitches.length === 0 ||
+                key !== chord.track + ":" + chord.tick) {
+                root.lastSyncError = "Invalid chord at " + key;
                 return false;
             }
 
             for (var p = 0; p < chord.pitches.length; p++) {
                 if (!Number.isInteger(chord.pitches[p]) ||
-                    chord.pitches[p] < 0 ||
-                    chord.pitches[p] > 127) {
-                    root.lastSyncError = "Invalid pitch at " + keys[i];
+                    chord.pitches[p] < 0 || chord.pitches[p] > 127) {
+                    root.lastSyncError = "Invalid pitch at " + key;
                     return false;
                 }
             }
+
+            if (!tracks[chord.track])
+                tracks[chord.track] = [];
+
+            tracks[chord.track].push(chord);
         }
 
-        // Check whether Client 2 has matching score positions.
-        for (var j = 0; j < keys.length; j++) {
-            var target = snapshot[keys[j]];
-            var check = curScore.newCursor();
+        for (var trackKey in tracks) {
+            var chords = tracks[trackKey];
+            chords.sort(function(a, b) {
+                return a.tick - b.tick;
+            });
 
-            check.track = target.track;
-            check.rewindToTick(target.tick);
-
-            if (check.tick !== target.tick) {
-                root.lastSyncError =
-                    "Position mismatch at " + keys[j] +
-                    " (expected " + target.tick +
-                    ", got " + check.tick + ")";
-                return false;
+            var endTick = 0;
+            for (var j = 0; j < chords.length; j++) {
+                if (chords[j].tick < endTick) {
+                    root.lastSyncError = "Overlapping notes in track " + trackKey;
+                    return false;
+                }
+                if (chords[j].tick % 30 !== 0 ||
+                    chords[j].duration % 30 !== 0) {
+                    root.lastSyncError = "Unsupported rhythm at " +
+                        trackKey + ":" + chords[j].tick;
+                    return false;
+                }
+                endTick = chords[j].tick + chords[j].duration;
             }
         }
 
-
         root.isRemoteUpdate = true;
-        var commandStarted = false;
+        scoreTimer.stop();
 
         try {
             curScore.startCmd();
             commandStarted = true;
 
-            // Collect existing chords before modifying anything.
             var existing = root.takeScoreSnapshot();
             var oldKeys = Object.keys(existing);
-
-            console.log("Removing " + oldKeys.length + " existing chords.");
-
-            // Remove the joiner's existing chords.
-            for (var k = oldKeys.length - 1; k >= 0; k--) {
-                var old = existing[oldKeys[k]];
-                var removeCursor = curScore.newCursor();
-
-                removeCursor.track = old.track;
-                removeCursor.rewindToTick(old.tick);
-
-                if (removeCursor.tick !== old.tick ||
-                    !removeCursor.element ||
-                    removeCursor.element.type !== Element.CHORD) {
-
-                    throw new Error(
-                        "Unable to clear chord at " + oldKeys[k]
-                    );
-                }
-
-                removeCursor.setDuration(old.duration, 1920);
-                removeCursor.addRest();
-
-                console.log("Removed chord at " + oldKeys[k]);
-            }
-
-            // Sort chords by track and position.
-            keys.sort(function (a, b) {
-                var x = snapshot[a];
-                var y = snapshot[b];
-
-                return x.track - y.track || x.tick - y.tick;
+            oldKeys.sort(function(a, b) {
+                return existing[b].track - existing[a].track ||
+                    existing[b].tick - existing[a].tick;
             });
 
-            console.log("Inserting host chords.");
+            for (var k = 0; k < oldKeys.length; k++) {
+                var old = existing[oldKeys[k]];
+                var clearCursor = curScore.newCursor();
+                clearCursor.track = old.track;
+                clearCursor.rewindToTick(old.tick);
 
-            // Insert the host's chords.
-            for (var n = 0; n < keys.length; n++) {
-                var data = snapshot[keys[n]];
-                var writeCursor = curScore.newCursor();
-
-                writeCursor.track = data.track;
-                writeCursor.rewindToTick(data.tick);
-
-                if (writeCursor.tick !== data.tick) {
-                    throw new Error(
-                        "Unable to write chord at " + keys[n]
-                    );
+                if (clearCursor.tick !== old.tick ||
+                    !clearCursor.element ||
+                    clearCursor.element.type !== Element.CHORD) {
+                    throw new Error("Cannot clear " + oldKeys[k]);
                 }
 
-                for (var q = 0; q < data.pitches.length; q++) {
-                    if (q > 0) {
-                        writeCursor.rewindToTick(data.tick);
+                clearCursor.setDuration(old.duration, 1920);
+                clearCursor.addRest();
+            }
+
+            var trackNames = Object.keys(tracks).sort(function(a, b) {
+                return Number(a) - Number(b);
+            });
+
+            for (var t = 0; t < trackNames.length; t++) {
+                var trackNumber = Number(trackNames[t]);
+                var notes = tracks[trackNames[t]];
+                var cursor = curScore.newCursor();
+                cursor.track = trackNumber;
+                cursor.rewind(0);
+
+                if (!cursor.segment || cursor.tick !== 0) {
+                    throw new Error("Cannot start track " + trackNumber);
+                }
+
+                var position = 0;
+
+                for (var n = 0; n < notes.length; n++) {
+                    var data = notes[n];
+                    var gap = data.tick - position;
+
+                    while (gap > 0) {
+                        var restDuration = 0;
+
+                        for (var r = 0; r < restSizes.length; r++) {
+                            if (restSizes[r] <= gap) {
+                                restDuration = restSizes[r];
+                                break;
+                            }
+                        }
+
+                        if (restDuration === 0) {
+                            throw new Error("Cannot fill gap before " +
+                                trackNumber + ":" + data.tick);
+                        }
+
+                        cursor.setDuration(restDuration, 1920);
+                        cursor.addRest();
+                        position += restDuration;
+                        gap -= restDuration;
                     }
 
-                    writeCursor.setDuration(data.duration, 1920);
-                    writeCursor.addNote(data.pitches[q], q > 0);
+                    cursor.setDuration(data.duration, 1920);
+                    cursor.addNote(data.pitches[0]);
+                    position = data.tick + data.duration;
+                }
+            }
+
+            // Add other pitches after the rhythm is in place.
+            for (var v = 0; v < keys.length; v++) {
+                var hostChord = snapshot[keys[v]];
+                if (hostChord.pitches.length < 2)
+                    continue;
+
+                var chordCursor = curScore.newCursor();
+                chordCursor.track = hostChord.track;
+                chordCursor.rewindToTick(hostChord.tick);
+
+                if (chordCursor.tick !== hostChord.tick ||
+                    !chordCursor.element ||
+                    chordCursor.element.type !== Element.CHORD) {
+                    throw new Error("Cannot find chord at " + keys[v]);
                 }
 
-                console.log("Inserted chord at " + keys[n]);
+                for (var q = 1; q < hostChord.pitches.length; q++) {
+                    chordCursor.rewindToTick(hostChord.tick);
+                    chordCursor.setDuration(hostChord.duration, 1920);
+                    chordCursor.addNote(hostChord.pitches[q], true);
+                }
             }
 
             curScore.endCmd();
             commandStarted = false;
 
-            console.log("Host score synchronization completed.");
-            return true;
+            var result = root.takeScoreSnapshot();
+            var resultKeys = Object.keys(result);
 
+            if (resultKeys.length !== keys.length) {
+                throw new Error("Expected " + keys.length +
+                    " chords, found " + resultKeys.length);
+            }
+
+            for (var x = 0; x < keys.length; x++) {
+                var expected = snapshot[keys[x]];
+                var actual = result[keys[x]];
+
+                if (!actual || actual.duration !== expected.duration ||
+                    JSON.stringify(actual.pitches) !==
+                    JSON.stringify(expected.pitches.slice().sort(function(a, b) {
+                        return a - b;
+                    }))) {
+                    throw new Error("Notes differ at " + keys[x]);
+                }
+            }
+
+            root.lastScoreSnapshot = result;
+            return true;
         } catch (error) {
             root.lastSyncError = String(error);
-            console.log("Host score sync error: " + error);
+            console.log("Initial sync failed: " + error);
 
             if (commandStarted) {
                 try {
                     curScore.endCmd();
                 } catch (ignored) {
-                    console.log("Failed to close score command.");
+                    console.log("Could not close score command.");
                 }
             }
-
             return false;
         } finally {
             root.isRemoteUpdate = false;
