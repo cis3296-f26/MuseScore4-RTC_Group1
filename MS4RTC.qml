@@ -18,10 +18,13 @@ MuseScore {
     property string activeSessionCode: ""
     property int lastNoteCount: -1
     property var lastScoreSnapshot: ({})
+    property bool waitingForHostSnapshot: false
+    property bool isHostSession: false
     property int lastTick: -1
     property int lastPitch: -1
     property bool isRemoteUpdate: false
     property string lastCursorPositionKey: ""
+    property string lastSyncError: "Unknown error"
 
     property var tickSizes: [1920, 960, 480, 240, 120, 60, 30]
     property var denoms: [1, 2, 4, 8, 16, 32, 64]
@@ -141,8 +144,82 @@ MuseScore {
 
             root.lastScoreSnapshot = root.takeScoreSnapshot();
             root.lastCursorPositionKey = "";
-            root.pollCursorPosition();
+            if (parsedMsg.type === "SessionCreated") {
+                root.isHostSession = true;
+                root.waitingForHostSnapshot = false;
+                root.pollCursorPosition();
+                scoreTimer.start();
+            } else {
+                root.isHostSession = false;
+                // Don't broadcast the joiner's existing score before initial sync.
+                root.waitingForHostSnapshot = true;
+                scoreTimer.stop();
+                sessionStatus.text = "Joined: " + parsedMsg.sessionCode + " (waiting for host score)";
+            }
+            return;
+        }
+
+        if (parsedMsg.type === "RequestScoreSnapshot") {
+            if (!root.isHostSession || !root.activeSessionCode || root.nodeSocketID === -1 ||
+                !parsedMsg.targetClientId)
+                return;
+            var hostSnapshot = root.takeScoreSnapshot();
+            api.websocket.send(root.nodeSocketID, JSON.stringify({
+                type: "ScoreSnapshot",
+                targetClientId: parsedMsg.targetClientId,
+                snapshot: hostSnapshot,
+                staffCount: curScore.nstaves
+            }));
+            console.log("Sent host score snapshot with " + Object.keys(hostSnapshot).length + " chord positions.");
+            return;
+        }
+
+        if (parsedMsg.type === "ScoreSnapshot") {
+            console.log("ScoreSnapshot received!");
+
+            if (!root.waitingForHostSnapshot) {
+                console.log("Ignoring snapshot: not waiting for host.");
+                return;
+            }
+
+            if (!parsedMsg.snapshot || typeof parsedMsg.snapshot !== "object") {
+                console.log("Invalid snapshot data.");
+                sessionStatus.text = "Invalid host score snapshot.";
+                return;
+            }
+
+            var chordPositions = Object.keys(parsedMsg.snapshot).length;
+
+            console.log("Host snapshot contains " + chordPositions + " chord positions.");
+            console.log("Host staff count:", parsedMsg.staffCount);
+            console.log("Client staff count:", curScore ? curScore.nstaves : "No score");
+
+            if (!curScore || parsedMsg.staffCount !== curScore.nstaves) {
+                console.log("Staff count mismatch or no score open.");
+                sessionStatus.text = "Cannot sync: incompatible score.";
+                return;
+            }
+
+            console.log("Starting applyHostSnapshot()...");
+
+            root.lastSyncError = "Unknown error";
+
+            var success = root.applyHostSnapshot(parsedMsg.snapshot);
+
+            console.log("applyHostSnapshot result:", success);
+
+            if (!success) {
+                sessionStatus.text = "Initial sync failed: " + root.lastSyncError;
+                return;
+            }
+
+            root.lastScoreSnapshot = root.takeScoreSnapshot();
+            root.waitingForHostSnapshot = false;
             scoreTimer.start();
+
+            sessionStatus.text = "Host notes synchronized (" + chordPositions + " chord positions).";
+
+            console.log("Initial score synchronization completed.");
             return;
         }
 
@@ -153,6 +230,8 @@ MuseScore {
 
         if (parsedMsg.type === "SessionClosed") {
             root.activeSessionCode = "";
+            root.isHostSession = false;
+            root.waitingForHostSnapshot = false;
             scoreTimer.stop();
             remoteCursorStatus.text = "Other collaborator: no selection reported";
             root.lastCursorPositionKey = "";
@@ -180,6 +259,7 @@ MuseScore {
             return;
         }
         if (parsedMsg.type === "ScoreOperation") {
+            if (root.waitingForHostSnapshot) return;
             if (parsedMsg.operation === "NoteSelectionChanged") {
                 return; // Prevent local cursor from snapping to the note when a remote user selects it
             }
@@ -224,22 +304,22 @@ MuseScore {
                 for (var i = 0; i < chordData.pitches.length; i++) {
                     cursor.addNote(chordData.pitches[i]);
                 }
-                
-            } else if ((parsedMsg.operation === "PitchChanged" || parsedMsg.operation === "DurationChanged") && parsedMsg.current){
+
+            } else if ((parsedMsg.operation === "PitchChanged" || parsedMsg.operation === "DurationChanged") && parsedMsg.current) {
                 var newChord = parsedMsg.current;
                 cursor.track = (newChord.track !== undefined) ? newChord.track : 0;
                 cursor.rewindToTick(newChord.tick);
-                
-                if (newChord.duration > 0){
+
+                if (newChord.duration > 0) {
                     cursor.setDuration(newChord.duration, 1920);
-                } else{
+                } else {
                     cursor.setDuration(1, 4);
                 }
-                
-                for (var i = 0; i < newChord.pitches.length; i++){
+
+                for (var i = 0; i < newChord.pitches.length; i++) {
                     cursor.addNote(newChord.pitches[i], i > 0);
                 }
-                
+
             } else if (parsedMsg.operation === "ChordRemoved" && parsedMsg.previous) {
                 var oldChord = parsedMsg.previous;
                 cursor.track = (oldChord.track !== undefined) ? oldChord.track : 0;
@@ -341,6 +421,187 @@ MuseScore {
         }
         return snapshot;
     }
+
+    // Initial synchronization: replace chord content in a compatible score template.
+    // This is NOT a complete .mscz import. Work on disposable copies of a score.
+
+    function applyHostSnapshot(snapshot) {
+        if (!curScore || !snapshot || Array.isArray(snapshot)) {
+            console.log("Sync failed: missing score or invalid snapshot.");
+            return false;
+        }
+
+        var keys = Object.keys(snapshot);
+        var totalTracks = curScore.nstaves * 4;
+
+        console.log("Starting host score synchronization.");
+        console.log("Incoming chord positions: " + keys.length);
+        console.log("Available tracks: " + totalTracks);
+
+
+        // Validate incoming chord data.
+        for (var i = 0; i < keys.length; i++) {
+            var chord = snapshot[keys[i]];
+
+            if (!chord) {
+                root.lastSyncError = "Missing chord at " + keys[i];
+                return false;
+            }
+
+            if (!Number.isInteger(chord.track) ||
+                chord.track < 0 ||
+                chord.track >= totalTracks) {
+                root.lastSyncError = "Invalid track at " + keys[i];
+                return false;
+            }
+
+            if (!Number.isInteger(chord.tick) || chord.tick < 0) {
+                root.lastSyncError = "Invalid tick at " + keys[i];
+                return false;
+            }
+
+            if (!Number.isInteger(chord.duration) ||
+                chord.duration <= 0) {
+                root.lastSyncError = "Invalid duration at " + keys[i] +
+                    ": " + chord.duration;
+                return false;
+            }
+
+            if (!Array.isArray(chord.pitches) ||
+                chord.pitches.length === 0) {
+                root.lastSyncError = "Invalid pitches at " + keys[i];
+                return false;
+            }
+
+            if (keys[i] !== chord.track + ":" + chord.tick) {
+                root.lastSyncError = "Chord position mismatch at " + keys[i];
+                return false;
+            }
+
+            for (var p = 0; p < chord.pitches.length; p++) {
+                if (!Number.isInteger(chord.pitches[p]) ||
+                    chord.pitches[p] < 0 ||
+                    chord.pitches[p] > 127) {
+                    root.lastSyncError = "Invalid pitch at " + keys[i];
+                    return false;
+                }
+            }
+        }
+
+        // Check whether Client 2 has matching score positions.
+        for (var j = 0; j < keys.length; j++) {
+            var target = snapshot[keys[j]];
+            var check = curScore.newCursor();
+
+            check.track = target.track;
+            check.rewindToTick(target.tick);
+
+            if (check.tick !== target.tick) {
+                root.lastSyncError =
+                    "Position mismatch at " + keys[j] +
+                    " (expected " + target.tick +
+                    ", got " + check.tick + ")";
+                return false;
+            }
+        }
+
+
+        root.isRemoteUpdate = true;
+        var commandStarted = false;
+
+        try {
+            curScore.startCmd();
+            commandStarted = true;
+
+            // Collect existing chords before modifying anything.
+            var existing = root.takeScoreSnapshot();
+            var oldKeys = Object.keys(existing);
+
+            console.log("Removing " + oldKeys.length + " existing chords.");
+
+            // Remove the joiner's existing chords.
+            for (var k = oldKeys.length - 1; k >= 0; k--) {
+                var old = existing[oldKeys[k]];
+                var removeCursor = curScore.newCursor();
+
+                removeCursor.track = old.track;
+                removeCursor.rewindToTick(old.tick);
+
+                if (removeCursor.tick !== old.tick ||
+                    !removeCursor.element ||
+                    removeCursor.element.type !== Element.CHORD) {
+
+                    throw new Error(
+                        "Unable to clear chord at " + oldKeys[k]
+                    );
+                }
+
+                removeCursor.setDuration(old.duration, 1920);
+                removeCursor.addRest();
+
+                console.log("Removed chord at " + oldKeys[k]);
+            }
+
+            // Sort chords by track and position.
+            keys.sort(function (a, b) {
+                var x = snapshot[a];
+                var y = snapshot[b];
+
+                return x.track - y.track || x.tick - y.tick;
+            });
+
+            console.log("Inserting host chords.");
+
+            // Insert the host's chords.
+            for (var n = 0; n < keys.length; n++) {
+                var data = snapshot[keys[n]];
+                var writeCursor = curScore.newCursor();
+
+                writeCursor.track = data.track;
+                writeCursor.rewindToTick(data.tick);
+
+                if (writeCursor.tick !== data.tick) {
+                    throw new Error(
+                        "Unable to write chord at " + keys[n]
+                    );
+                }
+
+                for (var q = 0; q < data.pitches.length; q++) {
+                    if (q > 0) {
+                        writeCursor.rewindToTick(data.tick);
+                    }
+
+                    writeCursor.setDuration(data.duration, 1920);
+                    writeCursor.addNote(data.pitches[q], q > 0);
+                }
+
+                console.log("Inserted chord at " + keys[n]);
+            }
+
+            curScore.endCmd();
+            commandStarted = false;
+
+            console.log("Host score synchronization completed.");
+            return true;
+
+        } catch (error) {
+            root.lastSyncError = String(error);
+            console.log("Host score sync error: " + error);
+
+            if (commandStarted) {
+                try {
+                    curScore.endCmd();
+                } catch (ignored) {
+                    console.log("Failed to close score command.");
+                }
+            }
+
+            return false;
+        } finally {
+            root.isRemoteUpdate = false;
+        }
+    }
+
 
     function sendDetectedChange(operation, previous, current) {
         console.log("Detected " + operation + ": " + JSON.stringify({
