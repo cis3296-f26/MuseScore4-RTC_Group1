@@ -12,7 +12,7 @@ MuseScore {
     version: "4.0"
     pluginType: "dialog"
     width: 400
-    height: 300
+    height: 350
     menuPath: "Plugins.Notes.RTC"
     property int nodeSocketID: -1
     property string activeSessionCode: ""
@@ -25,6 +25,7 @@ MuseScore {
     property bool isRemoteUpdate: false
     property string lastCursorPositionKey: ""
     property string lastSyncError: "Unknown error"
+    property string scoreWarning: ""
 
     property var tickSizes: [1920, 960, 480, 240, 120, 60, 30]
     property var denoms: [1, 2, 4, 8, 16, 32, 64]
@@ -37,7 +38,7 @@ MuseScore {
     Dialog {
         id: mainDialog
         width: 400
-        height: 300
+        height: 350
         visible: true
 
         background: Rectangle {
@@ -55,6 +56,23 @@ MuseScore {
                 color: "white"
                 font.pixelSize: 32
                 Layout.alignment: Qt.AlignHCenter
+            }
+
+            Label {
+                text: "Session: " + root.activeSessionCode + (root.isHostSession ? " (Host)" : " (Joined)")
+                visible: root.activeSessionCode.length > 0
+                color: "#a9d8ff"
+                font.bold: true
+                font.pixelSize: 17
+                Layout.alignment: Qt.AlignHCenter
+            }
+
+            Label {
+                text: root.scoreWarning
+                visible: root.scoreWarning.length > 0
+                color: "#ffd27f"
+                wrapMode: Text.Wrap
+                Layout.fillWidth: true
             }
 
             Button {
@@ -126,6 +144,56 @@ MuseScore {
             }
         }
     }
+    function scoreSettings() {
+        var info = { staffCount: curScore ? curScore.nstaves : 0, keys: [], timeSignature: "" };
+        if (!curScore) return info;
+
+        for (var i = 0; i < curScore.nstaves; i++) {
+            var cursor = curScore.newCursor();
+            cursor.track = i * 4;
+            cursor.rewind(0);
+            info.keys.push(cursor.segment ? cursor.keySignature : null);
+        }
+
+        var measure = curScore.firstMeasure;
+        if (measure && measure.timesigActual !== undefined && measure.timesigActual !== null) {
+            var timeSig = measure.timesigActual;
+            if (timeSig.numerator !== undefined && timeSig.denominator !== undefined) {
+                info.timeSignature = String(timeSig.numerator) + "/" + String(timeSig.denominator);
+            } else {
+                var value = String(timeSig);
+                if (/^[0-9]+\s*\/\s*[0-9]+$/.test(value)) {
+                    info.timeSignature = value.replace(/\s/g, "");
+                }
+            }
+        }
+        return info;
+    }
+
+    function compareScoreSettings(host) {
+        if (!host || !curScore) return "";
+        var local = root.scoreSettings();
+        var differences = [];
+
+        if (host.staffCount !== local.staffCount) {
+            differences.push("staff count");
+        }
+        if (host.timeSignature && local.timeSignature &&
+            host.timeSignature !== local.timeSignature) {
+            differences.push("time signature");
+        }
+        if (host.keys && local.keys) {
+            for (var i = 0; i < Math.min(host.keys.length, local.keys.length); i++) {
+                if (host.keys[i] !== null && local.keys[i] !== null &&
+                    host.keys[i] !== local.keys[i]) {
+                    differences.push("key signature (staff " + (i + 1) + ")");
+                }
+            }
+        }
+        return differences.length ? "Warning: Different " + differences.join(", ") + ". Clefs are not checked." :
+            "Clefs and instruments are not checked for differences.";
+    }
+
     function onMessageFromServer(msg) {
         var parsedMsg = JSON.parse(msg);
         if (parsedMsg.type === "Connected") {
@@ -135,6 +203,7 @@ MuseScore {
 
         if (parsedMsg.type === "SessionCreated" || parsedMsg.type === "SessionJoined") {
             root.activeSessionCode = parsedMsg.sessionCode;
+            root.scoreWarning = "";
 
             if (parsedMsg.type === "SessionCreated") {
                 sessionStatus.text = "Hosting: " + parsedMsg.sessionCode;
@@ -168,7 +237,8 @@ MuseScore {
                 type: "ScoreSnapshot",
                 targetClientId: parsedMsg.targetClientId,
                 snapshot: hostSnapshot,
-                staffCount: curScore.nstaves
+                staffCount: curScore.nstaves,
+                scoreSettings: root.scoreSettings()
             }));
             console.log("Sent host score snapshot with " + Object.keys(hostSnapshot).length + " chord positions.");
             return;
@@ -188,6 +258,7 @@ MuseScore {
                 return;
             }
 
+            root.scoreWarning = root.compareScoreSettings(parsedMsg.scoreSettings);
             var chordPositions = Object.keys(parsedMsg.snapshot).length;
 
             console.log("Host snapshot contains " + chordPositions + " chord positions.");
@@ -230,6 +301,7 @@ MuseScore {
 
         if (parsedMsg.type === "SessionClosed") {
             root.activeSessionCode = "";
+            root.scoreWarning = "";
             root.isHostSession = false;
             root.waitingForHostSnapshot = false;
             scoreTimer.stop();

@@ -272,7 +272,8 @@ wss.on("connection", async function connection(ws) {
                     sendJSON(joiner, {
                         type: "ScoreSnapshot",
                         snapshot: parsedData.snapshot,
-                        staffCount: parsedData.staffCount
+                        staffCount: parsedData.staffCount,
+                        scoreSettings: parsedData.scoreSettings
                     });
                     console.log("Host score snapshot forwarded to joining client in session:", ws.sessionCode);
                     break;
