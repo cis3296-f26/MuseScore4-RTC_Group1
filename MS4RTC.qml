@@ -12,16 +12,20 @@ MuseScore {
     version: "4.0"
     pluginType: "dialog"
     width: 400
-    height: 300
+    height: 350
     menuPath: "Plugins.Notes.RTC"
     property int nodeSocketID: -1
     property string activeSessionCode: ""
     property int lastNoteCount: -1
     property var lastScoreSnapshot: ({})
+    property bool waitingForHostSnapshot: false
+    property bool isHostSession: false
     property int lastTick: -1
     property int lastPitch: -1
     property bool isRemoteUpdate: false
     property string lastCursorPositionKey: ""
+    property string lastSyncError: "Unknown error"
+    property string scoreWarning: ""
 
     property var tickSizes: [1920, 960, 480, 240, 120, 60, 30]
     property var denoms: [1, 2, 4, 8, 16, 32, 64]
@@ -34,7 +38,7 @@ MuseScore {
     Dialog {
         id: mainDialog
         width: 400
-        height: 300
+        height: 350
         visible: true
 
         background: Rectangle {
@@ -52,6 +56,23 @@ MuseScore {
                 color: "white"
                 font.pixelSize: 32
                 Layout.alignment: Qt.AlignHCenter
+            }
+
+            Label {
+                text: "Session: " + root.activeSessionCode + (root.isHostSession ? " (Host)" : " (Joined)")
+                visible: root.activeSessionCode.length > 0
+                color: "#a9d8ff"
+                font.bold: true
+                font.pixelSize: 17
+                Layout.alignment: Qt.AlignHCenter
+            }
+
+            Label {
+                text: root.scoreWarning
+                visible: root.scoreWarning.length > 0
+                color: "#ffd27f"
+                wrapMode: Text.Wrap
+                Layout.fillWidth: true
             }
 
             Button {
@@ -123,6 +144,56 @@ MuseScore {
             }
         }
     }
+    function scoreSettings() {
+        var info = { staffCount: curScore ? curScore.nstaves : 0, keys: [], timeSignature: "" };
+        if (!curScore) return info;
+
+        for (var i = 0; i < curScore.nstaves; i++) {
+            var cursor = curScore.newCursor();
+            cursor.track = i * 4;
+            cursor.rewind(0);
+            info.keys.push(cursor.segment ? cursor.keySignature : null);
+        }
+
+        var measure = curScore.firstMeasure;
+        if (measure && measure.timesigActual !== undefined && measure.timesigActual !== null) {
+            var timeSig = measure.timesigActual;
+            if (timeSig.numerator !== undefined && timeSig.denominator !== undefined) {
+                info.timeSignature = String(timeSig.numerator) + "/" + String(timeSig.denominator);
+            } else {
+                var value = String(timeSig);
+                if (/^[0-9]+\s*\/\s*[0-9]+$/.test(value)) {
+                    info.timeSignature = value.replace(/\s/g, "");
+                }
+            }
+        }
+        return info;
+    }
+
+    function compareScoreSettings(host) {
+        if (!host || !curScore) return "";
+        var local = root.scoreSettings();
+        var differences = [];
+
+        if (host.staffCount !== local.staffCount) {
+            differences.push("staff count");
+        }
+        if (host.timeSignature && local.timeSignature &&
+            host.timeSignature !== local.timeSignature) {
+            differences.push("time signature");
+        }
+        if (host.keys && local.keys) {
+            for (var i = 0; i < Math.min(host.keys.length, local.keys.length); i++) {
+                if (host.keys[i] !== null && local.keys[i] !== null &&
+                    host.keys[i] !== local.keys[i]) {
+                    differences.push("key signature (staff " + (i + 1) + ")");
+                }
+            }
+        }
+        return differences.length ? "Warning: Different " + differences.join(", ") + ". Clefs are not checked." :
+            "Clefs and instruments are not checked for differences.";
+    }
+
     function onMessageFromServer(msg) {
         var parsedMsg = JSON.parse(msg);
         if (parsedMsg.type === "Connected") {
@@ -132,6 +203,7 @@ MuseScore {
 
         if (parsedMsg.type === "SessionCreated" || parsedMsg.type === "SessionJoined") {
             root.activeSessionCode = parsedMsg.sessionCode;
+            root.scoreWarning = "";
 
             if (parsedMsg.type === "SessionCreated") {
                 sessionStatus.text = "Hosting: " + parsedMsg.sessionCode;
@@ -141,8 +213,84 @@ MuseScore {
 
             root.lastScoreSnapshot = root.takeScoreSnapshot();
             root.lastCursorPositionKey = "";
-            root.pollCursorPosition();
+            if (parsedMsg.type === "SessionCreated") {
+                root.isHostSession = true;
+                root.waitingForHostSnapshot = false;
+                root.pollCursorPosition();
+                scoreTimer.start();
+            } else {
+                root.isHostSession = false;
+                // Don't broadcast the joiner's existing score before initial sync.
+                root.waitingForHostSnapshot = true;
+                scoreTimer.stop();
+                sessionStatus.text = "Joined: " + parsedMsg.sessionCode + " (waiting for host score)";
+            }
+            return;
+        }
+
+        if (parsedMsg.type === "RequestScoreSnapshot") {
+            if (!root.isHostSession || !root.activeSessionCode || root.nodeSocketID === -1 ||
+                !parsedMsg.targetClientId)
+                return;
+            var hostSnapshot = root.takeScoreSnapshot();
+            api.websocket.send(root.nodeSocketID, JSON.stringify({
+                type: "ScoreSnapshot",
+                targetClientId: parsedMsg.targetClientId,
+                snapshot: hostSnapshot,
+                staffCount: curScore.nstaves,
+                scoreSettings: root.scoreSettings()
+            }));
+            console.log("Sent host score snapshot with " + Object.keys(hostSnapshot).length + " chord positions.");
+            return;
+        }
+
+        if (parsedMsg.type === "ScoreSnapshot") {
+            console.log("ScoreSnapshot received!");
+
+            if (!root.waitingForHostSnapshot) {
+                console.log("Ignoring snapshot: not waiting for host.");
+                return;
+            }
+
+            if (!parsedMsg.snapshot || typeof parsedMsg.snapshot !== "object") {
+                console.log("Invalid snapshot data.");
+                sessionStatus.text = "Invalid host score snapshot.";
+                return;
+            }
+
+            root.scoreWarning = root.compareScoreSettings(parsedMsg.scoreSettings);
+            var chordPositions = Object.keys(parsedMsg.snapshot).length;
+
+            console.log("Host snapshot contains " + chordPositions + " chord positions.");
+            console.log("Host staff count:", parsedMsg.staffCount);
+            console.log("Client staff count:", curScore ? curScore.nstaves : "No score");
+
+            if (!curScore || parsedMsg.staffCount !== curScore.nstaves) {
+                console.log("Staff count mismatch or no score open.");
+                sessionStatus.text = "Cannot sync: incompatible score.";
+                return;
+            }
+
+            console.log("Starting applyHostSnapshot()...");
+
+            root.lastSyncError = "Unknown error";
+
+            var success = root.applyHostSnapshot(parsedMsg.snapshot);
+
+            console.log("applyHostSnapshot result:", success);
+
+            if (!success) {
+                sessionStatus.text = "Initial sync failed: " + root.lastSyncError;
+                return;
+            }
+
+            root.lastScoreSnapshot = root.takeScoreSnapshot();
+            root.waitingForHostSnapshot = false;
             scoreTimer.start();
+
+            sessionStatus.text = "Host notes synchronized (" + chordPositions + " chord positions).";
+
+            console.log("Initial score synchronization completed.");
             return;
         }
 
@@ -153,6 +301,9 @@ MuseScore {
 
         if (parsedMsg.type === "SessionClosed") {
             root.activeSessionCode = "";
+            root.scoreWarning = "";
+            root.isHostSession = false;
+            root.waitingForHostSnapshot = false;
             scoreTimer.stop();
             remoteCursorStatus.text = "Other collaborator: no selection reported";
             root.lastCursorPositionKey = "";
@@ -180,6 +331,7 @@ MuseScore {
             return;
         }
         if (parsedMsg.type === "ScoreOperation") {
+            if (root.waitingForHostSnapshot) return;
             if (parsedMsg.operation === "NoteSelectionChanged") {
                 return; // Prevent local cursor from snapping to the note when a remote user selects it
             }
@@ -224,22 +376,22 @@ MuseScore {
                 for (var i = 0; i < chordData.pitches.length; i++) {
                     cursor.addNote(chordData.pitches[i]);
                 }
-                
-            } else if ((parsedMsg.operation === "PitchChanged" || parsedMsg.operation === "DurationChanged") && parsedMsg.current){
+
+            } else if ((parsedMsg.operation === "PitchChanged" || parsedMsg.operation === "DurationChanged") && parsedMsg.current) {
                 var newChord = parsedMsg.current;
                 cursor.track = (newChord.track !== undefined) ? newChord.track : 0;
                 cursor.rewindToTick(newChord.tick);
-                
-                if (newChord.duration > 0){
+
+                if (newChord.duration > 0) {
                     cursor.setDuration(newChord.duration, 1920);
-                } else{
+                } else {
                     cursor.setDuration(1, 4);
                 }
-                
-                for (var i = 0; i < newChord.pitches.length; i++){
+
+                for (var i = 0; i < newChord.pitches.length; i++) {
                     cursor.addNote(newChord.pitches[i], i > 0);
                 }
-                
+
             } else if (parsedMsg.operation === "ChordRemoved" && parsedMsg.previous) {
                 var oldChord = parsedMsg.previous;
                 cursor.track = (oldChord.track !== undefined) ? oldChord.track : 0;
@@ -341,6 +493,216 @@ MuseScore {
         }
         return snapshot;
     }
+
+    function applyHostSnapshot(snapshot) {
+        root.lastSyncError = "Unknown error";
+
+        if (!curScore || !snapshot || Array.isArray(snapshot)) {
+            root.lastSyncError = "Missing score or invalid snapshot.";
+            return false;
+        }
+
+        var keys = Object.keys(snapshot);
+        var trackCount = curScore.nstaves * 4;
+        var tracks = {};
+        var restSizes = [1920, 960, 480, 240, 120, 60, 30];
+        var commandStarted = false;
+
+        for (var i = 0; i < keys.length; i++) {
+            var key = keys[i];
+            var chord = snapshot[key];
+
+            if (!chord ||
+                !Number.isInteger(chord.track) ||
+                chord.track < 0 || chord.track >= trackCount ||
+                !Number.isInteger(chord.tick) || chord.tick < 0 ||
+                !Number.isInteger(chord.duration) || chord.duration <= 0 ||
+                !Array.isArray(chord.pitches) || chord.pitches.length === 0 ||
+                key !== chord.track + ":" + chord.tick) {
+                root.lastSyncError = "Invalid chord at " + key;
+                return false;
+            }
+
+            for (var p = 0; p < chord.pitches.length; p++) {
+                if (!Number.isInteger(chord.pitches[p]) ||
+                    chord.pitches[p] < 0 || chord.pitches[p] > 127) {
+                    root.lastSyncError = "Invalid pitch at " + key;
+                    return false;
+                }
+            }
+
+            if (!tracks[chord.track])
+                tracks[chord.track] = [];
+
+            tracks[chord.track].push(chord);
+        }
+
+        for (var trackKey in tracks) {
+            var chords = tracks[trackKey];
+            chords.sort(function(a, b) {
+                return a.tick - b.tick;
+            });
+
+            var endTick = 0;
+            for (var j = 0; j < chords.length; j++) {
+                if (chords[j].tick < endTick) {
+                    root.lastSyncError = "Overlapping notes in track " + trackKey;
+                    return false;
+                }
+                if (chords[j].tick % 30 !== 0 ||
+                    chords[j].duration % 30 !== 0) {
+                    root.lastSyncError = "Unsupported rhythm at " +
+                        trackKey + ":" + chords[j].tick;
+                    return false;
+                }
+                endTick = chords[j].tick + chords[j].duration;
+            }
+        }
+
+        root.isRemoteUpdate = true;
+        scoreTimer.stop();
+
+        try {
+            curScore.startCmd();
+            commandStarted = true;
+
+            var existing = root.takeScoreSnapshot();
+            var oldKeys = Object.keys(existing);
+            oldKeys.sort(function(a, b) {
+                return existing[b].track - existing[a].track ||
+                    existing[b].tick - existing[a].tick;
+            });
+
+            for (var k = 0; k < oldKeys.length; k++) {
+                var old = existing[oldKeys[k]];
+                var clearCursor = curScore.newCursor();
+                clearCursor.track = old.track;
+                clearCursor.rewindToTick(old.tick);
+
+                if (clearCursor.tick !== old.tick ||
+                    !clearCursor.element ||
+                    clearCursor.element.type !== Element.CHORD) {
+                    throw new Error("Cannot clear " + oldKeys[k]);
+                }
+
+                clearCursor.setDuration(old.duration, 1920);
+                clearCursor.addRest();
+            }
+
+            var trackNames = Object.keys(tracks).sort(function(a, b) {
+                return Number(a) - Number(b);
+            });
+
+            for (var t = 0; t < trackNames.length; t++) {
+                var trackNumber = Number(trackNames[t]);
+                var notes = tracks[trackNames[t]];
+                var cursor = curScore.newCursor();
+                cursor.track = trackNumber;
+                cursor.rewind(0);
+
+                if (!cursor.segment || cursor.tick !== 0) {
+                    throw new Error("Cannot start track " + trackNumber);
+                }
+
+                var position = 0;
+
+                for (var n = 0; n < notes.length; n++) {
+                    var data = notes[n];
+                    var gap = data.tick - position;
+
+                    while (gap > 0) {
+                        var restDuration = 0;
+
+                        for (var r = 0; r < restSizes.length; r++) {
+                            if (restSizes[r] <= gap) {
+                                restDuration = restSizes[r];
+                                break;
+                            }
+                        }
+
+                        if (restDuration === 0) {
+                            throw new Error("Cannot fill gap before " +
+                                trackNumber + ":" + data.tick);
+                        }
+
+                        cursor.setDuration(restDuration, 1920);
+                        cursor.addRest();
+                        position += restDuration;
+                        gap -= restDuration;
+                    }
+
+                    cursor.setDuration(data.duration, 1920);
+                    cursor.addNote(data.pitches[0]);
+                    position = data.tick + data.duration;
+                }
+            }
+
+            // Add other pitches after the rhythm is in place.
+            for (var v = 0; v < keys.length; v++) {
+                var hostChord = snapshot[keys[v]];
+                if (hostChord.pitches.length < 2)
+                    continue;
+
+                var chordCursor = curScore.newCursor();
+                chordCursor.track = hostChord.track;
+                chordCursor.rewindToTick(hostChord.tick);
+
+                if (chordCursor.tick !== hostChord.tick ||
+                    !chordCursor.element ||
+                    chordCursor.element.type !== Element.CHORD) {
+                    throw new Error("Cannot find chord at " + keys[v]);
+                }
+
+                for (var q = 1; q < hostChord.pitches.length; q++) {
+                    chordCursor.rewindToTick(hostChord.tick);
+                    chordCursor.setDuration(hostChord.duration, 1920);
+                    chordCursor.addNote(hostChord.pitches[q], true);
+                }
+            }
+
+            curScore.endCmd();
+            commandStarted = false;
+
+            var result = root.takeScoreSnapshot();
+            var resultKeys = Object.keys(result);
+
+            if (resultKeys.length !== keys.length) {
+                throw new Error("Expected " + keys.length +
+                    " chords, found " + resultKeys.length);
+            }
+
+            for (var x = 0; x < keys.length; x++) {
+                var expected = snapshot[keys[x]];
+                var actual = result[keys[x]];
+
+                if (!actual || actual.duration !== expected.duration ||
+                    JSON.stringify(actual.pitches) !==
+                    JSON.stringify(expected.pitches.slice().sort(function(a, b) {
+                        return a - b;
+                    }))) {
+                    throw new Error("Notes differ at " + keys[x]);
+                }
+            }
+
+            root.lastScoreSnapshot = result;
+            return true;
+        } catch (error) {
+            root.lastSyncError = String(error);
+            console.log("Initial sync failed: " + error);
+
+            if (commandStarted) {
+                try {
+                    curScore.endCmd();
+                } catch (ignored) {
+                    console.log("Could not close score command.");
+                }
+            }
+            return false;
+        } finally {
+            root.isRemoteUpdate = false;
+        }
+    }
+
 
     function sendDetectedChange(operation, previous, current) {
         console.log("Detected " + operation + ": " + JSON.stringify({
